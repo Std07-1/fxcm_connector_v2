@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="uk">
+
+<head>
+    <meta charset="utf-8" />
+    <title>FXCM Connector Preview Chart</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 12px;
+        }
+        
+        #chart {
+            width: 100%;
+            height: 600px;
+        }
+        
+        .row {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="row">
+        <label>Symbol: <input id="symbol" value="XAUUSD" /></label>
+        <label>TF:
+        <select id="tf">
+          <option>1m</option>
+          <option>5m</option>
+          <option>15m</option>
+          <option>1h</option>
+          <option>4h</option>
+          <option>1d</option>
+        </select>
+      </label>
+        <button id="refresh">Оновити</button>
+    </div>
+    <div id="chart"></div>
+    <script>
+        const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+            height: 600
+        });
+        const series = chart.addCandlestickSeries();
+
+        async function load() {
+            const symbol = document.getElementById('symbol').value;
+            const tf = document.getElementById('tf').value;
+            const res = await fetch(`/api/ohlcv?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&limit=300`);
+            const data = await res.json();
+            const bars = (data.bars || []).map(b => ({
+                time: Math.floor(b.open_time / 1000),
+                open: b.open,
+                high: b.high,
+                low: b.low,
+                close: b.close
+            }));
+            series.setData(bars);
+        }
+
+        document.getElementById('refresh').addEventListener('click', load);
+        load();
+    </script>
+</body>
+
+</html>

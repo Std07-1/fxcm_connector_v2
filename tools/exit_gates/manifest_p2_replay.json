@@ -1,0 +1,3 @@
+[
+  {"id": "gate_tick_replay_monotonic", "module": "tools.exit_gates.gates.gate_tick_replay_monotonic", "fn": "run"}
+]

@@ -1,0 +1,20 @@
+{
+  "symbol": "XAUUSD",
+  "tf": "1m",
+  "source": "stream",
+  "bars": [
+    {
+      "open_time": 1700000040000,
+      "close_time": 1700000099999,
+      "open": 2000.0,
+      "high": 2000.5,
+      "low": 1999.8,
+      "close": 2000.2,
+      "volume": 10.0,
+      "tick_count": 10,
+      "complete": false,
+      "synthetic": false,
+      "source": "stream"
+    }
+  ]
+}

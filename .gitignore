@@ -1,0 +1,42 @@
+config/secrets_local.py
+config/secrets_prod.py
+config/profile_local.py
+config/profile_prod.py
+
+.env
+.env.local
+.env.prod
+
+Work/*
+
+# Python/venv/cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Артефакти/логи/аудити/репорти
+data/audit*/
+data/audit_v*/
+data/audit_p0_proof/
+reports/
+recordings/
+*.log
+*.log.*
+*.out
+*.err
+
+# Документація‑артефакти (аудити/звіти)
+docs/audit*/
+docs/audit_v*/
+docs/audit_master_*.md
+docs/exit_gates_one_shot_spec.md
+
+# Інструкції/внутрішні правила
+.github/copilot-instructions.md
+docs/COPILOT_RULES.md
+docs/COPILOT_LOG_RAIL.md

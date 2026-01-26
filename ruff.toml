@@ -1,0 +1,11 @@
+target-version = "py37"
+line-length = 120
+extend-exclude = [".venv"]
+
+[lint]
+select = ["E", "F", "I"]
+ignore = []
+
+[lint.isort]
+known-first-party = ["app", "config", "core", "runtime", "observability", "store", "fxcm", "tests", "tools"]
+combine-as-imports = true

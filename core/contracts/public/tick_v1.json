@@ -1,0 +1,14 @@
+{
+  "$id": "tick_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["symbol", "bid", "ask", "mid", "tick_ts", "snap_ts"],
+  "properties": {
+    "symbol": { "type": "string", "minLength": 1 },
+    "bid": { "type": "number" },
+    "ask": { "type": "number" },
+    "mid": { "type": "number" },
+    "tick_ts": { "type": "integer", "minimum": 0 },
+    "snap_ts": { "type": "integer", "minimum": 0 }
+  }
+}

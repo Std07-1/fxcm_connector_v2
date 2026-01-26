@@ -1,0 +1,168 @@
+from __future__ import annotations
+
+from runtime.status import (
+    STATUS_DEGRADED_MAX,
+    STATUS_ERRORS_MAX,
+    STATUS_PUBSUB_MAX_BYTES,
+    build_status_pubsub_payload,
+    status_payload_size_bytes,
+)
+
+
+def test_status_payload_size_rail_ok() -> None:
+    snapshot = {
+        "ts": 1,
+        "version": "0.0.0",
+        "schema_version": 2,
+        "pipeline_version": "p0",
+        "build_version": "dev",
+        "process": {"pid": 1, "uptime_s": 0.1, "state": "running"},
+        "market": {
+            "is_open": True,
+            "next_open_utc": "2026-01-01T00:00:00Z",
+            "next_pause_utc": "2026-01-01T00:00:00Z",
+            "calendar_tag": "fxcm_calendar_v1_ny",
+        },
+        "errors": [{"code": "e", "severity": "error", "message": "m", "ts": 1}] * 40,
+        "degraded": ["calendar_error"] * 40,
+        "command_bus": {
+            "channel": "fxcm_local:commands",
+            "state": "running",
+            "last_heartbeat_ts_ms": 0,
+            "last_error": None,
+        },
+        "last_command": {
+            "cmd": "bootstrap",
+            "req_id": "bootstrap",
+            "state": "ok",
+            "started_ts": 1,
+            "finished_ts": 1,
+            "result": {},
+        },
+        "price": {
+            "last_tick_ts_ms": 0,
+            "last_snap_ts_ms": 0,
+            "tick_lag_ms": 0,
+            "tick_total": 0,
+            "tick_err_total": 0,
+        },
+        "fxcm": {
+            "state": "disabled",
+            "fsm_state": "disabled",
+            "last_tick_ts_ms": 0,
+            "last_ok_ts_ms": 0,
+            "last_err": None,
+            "last_err_ts_ms": 0,
+            "reconnect_attempt": 0,
+            "next_retry_ts_ms": 0,
+            "stale_seconds": 0,
+            "last_action": "",
+            "ticks_total": 0,
+            "stale_events_total": 0,
+            "resubscribe_total": 0,
+            "reconnect_total": 0,
+            "publish_fail_total": 0,
+            "contract_reject_total": 0,
+        },
+        "ohlcv_preview": {
+            "last_publish_ts_ms": 0,
+            "preview_total": 0,
+            "preview_err_total": 0,
+            "late_ticks_dropped_total": 0,
+            "misaligned_open_time_total": 0,
+            "past_mutations_total": 0,
+            "last_bucket_open_ms": 0,
+            "last_tick_ts_ms": 0,
+            "last_late_tick": {"tick_ts_ms": 0, "bucket_open_ms": 0, "current_bucket_open_ms": 0},
+            "last_bar_open_time_ms": {"1m": 0, "5m": 0, "15m": 0, "1h": 0, "4h": 0, "1d": 0},
+        },
+        "ohlcv_final_1m": {"last_complete_bar_ms": 0, "lag_ms": 0, "bars_lookback_days": 0, "bars_total_est": 0},
+        "ohlcv_final": {
+            "1m": {"last_complete_bar_ms": 0, "lag_ms": 0, "bars_lookback_days": 0, "bars_total_est": 0},
+            "15m": {"last_complete_bar_ms": 0, "lag_ms": 0, "bars_lookback_days": 0, "bars_total_est": 0},
+            "1h": {"last_complete_bar_ms": 0, "lag_ms": 0, "bars_lookback_days": 0, "bars_total_est": 0},
+            "4h": {"last_complete_bar_ms": 0, "lag_ms": 0, "bars_lookback_days": 0, "bars_total_est": 0},
+            "1d": {"last_complete_bar_ms": 0, "lag_ms": 0, "bars_lookback_days": 0, "bars_total_est": 0},
+        },
+        "history": {
+            "ready": True,
+            "not_ready_reason": "",
+            "history_retry_after_ms": 0,
+            "next_trading_open_ms": 0,
+            "backoff_ms": 0,
+            "backoff_active": False,
+            "last_not_ready_ts_ms": 0,
+        },
+        "derived_rebuild": {
+            "last_run_ts_ms": 0,
+            "last_range_ms": [0, 0],
+            "last_tfs": ["1m"] * 40,
+            "state": "idle",
+            "errors": ["e"] * 40,
+        },
+        "no_mix": {"conflicts_total": 0, "last_conflict": None},
+        "tail_guard": {
+            "last_audit_ts_ms": 0,
+            "window_hours": 0,
+            "tf_states": {
+                "1m": {"missing_bars": 0, "skipped_by_ttl": False, "state": "idle"},
+                "15m": {"missing_bars": 0, "skipped_by_ttl": False, "state": "idle"},
+                "1h": {"missing_bars": 0, "skipped_by_ttl": False, "state": "idle"},
+                "4h": {"missing_bars": 0, "skipped_by_ttl": False, "state": "idle"},
+                "1d": {"missing_bars": 0, "skipped_by_ttl": False, "state": "idle"},
+            },
+            "marks": {
+                "1m": {
+                    "verified_from_ms": 0,
+                    "verified_until_ms": 0,
+                    "checked_until_close_ms": 0,
+                    "etag_last_complete_bar_ms": 0,
+                    "last_audit_ts_ms": 0,
+                },
+                "15m": {
+                    "verified_from_ms": 0,
+                    "verified_until_ms": 0,
+                    "checked_until_close_ms": 0,
+                    "etag_last_complete_bar_ms": 0,
+                    "last_audit_ts_ms": 0,
+                },
+                "1h": {
+                    "verified_from_ms": 0,
+                    "verified_until_ms": 0,
+                    "checked_until_close_ms": 0,
+                    "etag_last_complete_bar_ms": 0,
+                    "last_audit_ts_ms": 0,
+                },
+                "4h": {
+                    "verified_from_ms": 0,
+                    "verified_until_ms": 0,
+                    "checked_until_close_ms": 0,
+                    "etag_last_complete_bar_ms": 0,
+                    "last_audit_ts_ms": 0,
+                },
+                "1d": {
+                    "verified_from_ms": 0,
+                    "verified_until_ms": 0,
+                    "checked_until_close_ms": 0,
+                    "etag_last_complete_bar_ms": 0,
+                    "last_audit_ts_ms": 0,
+                },
+            },
+            "repaired": False,
+        },
+        "republish": {
+            "last_run_ts_ms": 0,
+            "last_req_id": "",
+            "skipped_by_watermark": False,
+            "forced": False,
+            "published_batches": 0,
+            "state": "idle",
+        },
+    }
+
+    payload = build_status_pubsub_payload(snapshot)
+    assert len(payload["errors"]) <= STATUS_ERRORS_MAX
+    assert len(payload["degraded"]) <= STATUS_DEGRADED_MAX
+    assert len(payload["derived_rebuild"]["last_tfs"]) <= 10
+    size = status_payload_size_bytes(payload)
+    assert size <= STATUS_PUBSUB_MAX_BYTES

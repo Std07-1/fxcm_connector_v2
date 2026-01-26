@@ -1,0 +1,268 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "P0: bootstrap",
+      "type": "shell",
+      "command": "bash tools/bootstrap_p0.sh",
+      "windows": {
+        "command": "powershell",
+        "args": ["-ExecutionPolicy", "Bypass", "-File", "tools\\bootstrap_p0.ps1"]
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Lint: ruff",
+      "type": "shell",
+      "command": "bash -lc 'source .venv/bin/activate && ruff check .'",
+      "problemMatcher": []
+    },
+    {
+      "label": "Typecheck: mypy",
+      "type": "shell",
+      "command": "bash -lc 'source .venv/bin/activate && mypy .'",
+      "problemMatcher": []
+    },
+    {
+      "label": "Test: pytest",
+      "type": "shell",
+      "command": "bash -lc 'source .venv/bin/activate && pytest -q'",
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P0",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p0.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P1",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p1.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P2",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p2.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P3",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p3.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P4",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p4.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P4.1",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p41.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P5",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p5.ps1",
+        "-NS",
+        "fxcm_local"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P5.1",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p5.ps1",
+        "-NS",
+        "fxcm_local",
+        "-OutDir",
+        "data\\audit_v3"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P6",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p6.ps1",
+        "-NS",
+        "fxcm_local",
+        "-OutDir",
+        "data\\audit_v3"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P6.1",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p61.ps1",
+        "-NS",
+        "fxcm_local",
+        "-OutDir",
+        "data\\audit_v3"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P7 (offline)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p7.ps1",
+        "-NS",
+        "fxcm_local",
+        "-OutDir",
+        "data\\audit_v3",
+        "-Mode",
+        "offline"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P7 (online)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p7.ps1",
+        "-NS",
+        "fxcm_local",
+        "-OutDir",
+        "data\\audit_v3",
+        "-Mode",
+        "online"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Exit Gate P7A",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\run_exit_gate_p7a.ps1",
+        "-NS",
+        "fxcm_local",
+        "-OutDir",
+        "data\\audit_v3"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Run: UI Lite",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m ui_lite.server"
+      ],
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Scan Log",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe tools/audit/scan_log_entries.py > data/audit_v3/log_scan_report.txt"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: Repair Log Append",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools\\audit\\repair_log_append.ps1"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

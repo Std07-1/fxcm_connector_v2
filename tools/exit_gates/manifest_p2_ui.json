@@ -1,0 +1,3 @@
+[
+  {"id": "gate_chart_no_runtime_static", "module": "tools.exit_gates.gates.gate_chart_no_runtime_static", "fn": "run"}
+]

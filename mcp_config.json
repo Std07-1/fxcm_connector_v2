@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "instructions_path": "docs/copilot-instructions.md",
+  "policy": {
+    "language": "uk",
+    "python": "3.7",
+    "no_silent_fallback": true,
+    "contract_first": true
+  }
+}

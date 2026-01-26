@@ -1,0 +1,461 @@
+{
+    "$id": "status_v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "ts",
+        "version",
+        "schema_version",
+        "pipeline_version",
+        "build_version",
+        "process",
+        "market",
+        "errors",
+        "degraded",
+        "command_bus",
+        "last_command"
+    ],
+    "properties": {
+        "ts": { "type": "integer", "minimum": 0 },
+        "version": { "type": "string", "minLength": 1 },
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "pipeline_version": { "type": "string", "minLength": 1 },
+        "build_version": { "type": "string", "minLength": 1 },
+
+        "process": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pid", "uptime_s", "state"],
+            "properties": {
+                "pid": { "type": "integer", "minimum": 1 },
+                "uptime_s": { "type": "number", "minimum": 0 },
+                "state": { "type": "string", "minLength": 1 }
+            }
+        },
+
+        "market": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["is_open", "next_open_utc", "next_pause_utc", "calendar_tag"],
+            "properties": {
+                "is_open": { "type": "boolean" },
+                "next_open_utc": { "type": "string", "minLength": 1 },
+                "next_pause_utc": { "type": "string", "minLength": 1 },
+                "calendar_tag": { "type": "string", "minLength": 1 },
+                "tz_backend": { "type": "string", "minLength": 1 }
+            }
+        },
+
+        "errors": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code", "severity", "message", "ts"],
+                "properties": {
+                    "code": { "type": "string", "minLength": 1 },
+                    "severity": { "type": "string", "minLength": 1 },
+                    "symbol": { "type": "string" },
+                    "tf": { "type": "string" },
+                    "message": { "type": "string", "minLength": 1 },
+                    "ts": { "type": "integer", "minimum": 0 },
+                    "context": { "type": "object", "additionalProperties": true }
+                }
+            }
+        },
+
+        "degraded": {
+            "type": "array",
+            "items": { "type": "string" }
+        },
+
+        "price": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "last_tick_ts_ms",
+                "last_snap_ts_ms",
+                "last_tick_event_ms",
+                "last_tick_snap_ms",
+                "tick_skew_ms",
+                "ticks_dropped_1m",
+                "tick_lag_ms",
+                "tick_total",
+                "tick_err_total"
+            ],
+            "properties": {
+                "last_tick_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_snap_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_tick_event_ms": { "type": "integer", "minimum": 0 },
+                "last_tick_snap_ms": { "type": "integer", "minimum": 0 },
+                "tick_skew_ms": { "type": "integer", "minimum": 0 },
+                "ticks_dropped_1m": { "type": "integer", "minimum": 0 },
+                "tick_lag_ms": { "type": "integer", "minimum": 0 },
+                "tick_total": { "type": "integer", "minimum": 0 },
+                "tick_err_total": { "type": "integer", "minimum": 0 }
+            }
+        },
+
+        "fxcm": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "state",
+                "fsm_state",
+                "last_tick_ts_ms",
+                "last_ok_ts_ms",
+                "last_err",
+                "last_err_ts_ms",
+                "reconnect_attempt",
+                "next_retry_ts_ms",
+                "stale_seconds",
+                "last_action",
+                "ticks_total",
+                "stale_events_total",
+                "resubscribe_total",
+                "reconnect_total",
+                "publish_fail_total",
+                "contract_reject_total"
+            ],
+            "properties": {
+                "state": { "type": "string", "minLength": 1 },
+                "fsm_state": { "type": "string", "minLength": 1 },
+                "last_tick_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_ok_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_err": { "type": ["string", "null"] },
+                "last_err_ts_ms": { "type": "integer", "minimum": 0 },
+                "reconnect_attempt": { "type": "integer", "minimum": 0 },
+                "next_retry_ts_ms": { "type": "integer", "minimum": 0 },
+                "stale_seconds": { "type": "integer", "minimum": 0 },
+                "last_action": { "type": "string" },
+                "ticks_total": { "type": "integer", "minimum": 0 },
+                "stale_events_total": { "type": "integer", "minimum": 0 },
+                "resubscribe_total": { "type": "integer", "minimum": 0 },
+                "reconnect_total": { "type": "integer", "minimum": 0 },
+                "publish_fail_total": { "type": "integer", "minimum": 0 },
+                "contract_reject_total": { "type": "integer", "minimum": 0 }
+            }
+        },
+
+        "ohlcv_preview": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "last_publish_ts_ms",
+                "preview_total",
+                "preview_err_total",
+                "last_bar_open_time_ms",
+                "late_ticks_dropped_total",
+                "misaligned_open_time_total",
+                "past_mutations_total",
+                "last_bucket_open_ms",
+                "last_tick_ts_ms",
+                "last_late_tick"
+            ],
+            "properties": {
+                "last_publish_ts_ms": { "type": "integer", "minimum": 0 },
+                "preview_total": { "type": "integer", "minimum": 0 },
+                "preview_err_total": { "type": "integer", "minimum": 0 },
+                "late_ticks_dropped_total": { "type": "integer", "minimum": 0 },
+                "misaligned_open_time_total": { "type": "integer", "minimum": 0 },
+                "past_mutations_total": { "type": "integer", "minimum": 0 },
+                "last_bucket_open_ms": { "type": "integer", "minimum": 0 },
+                "last_tick_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_late_tick": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["tick_ts_ms", "bucket_open_ms", "current_bucket_open_ms"],
+                    "properties": {
+                        "tick_ts_ms": { "type": "integer", "minimum": 0 },
+                        "bucket_open_ms": { "type": "integer", "minimum": 0 },
+                        "current_bucket_open_ms": { "type": "integer", "minimum": 0 }
+                    }
+                },
+                "last_bar_open_time_ms": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["1m", "5m", "15m", "1h", "4h", "1d"],
+                    "properties": {
+                        "1m": { "type": "integer", "minimum": 0 },
+                        "5m": { "type": "integer", "minimum": 0 },
+                        "15m": { "type": "integer", "minimum": 0 },
+                        "1h": { "type": "integer", "minimum": 0 },
+                        "4h": { "type": "integer", "minimum": 0 },
+                        "1d": { "type": "integer", "minimum": 0 }
+                    }
+                }
+            }
+        },
+
+        "ohlcv_final_1m": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["last_complete_bar_ms", "lag_ms", "bars_lookback_days", "bars_total_est"],
+            "properties": {
+                "last_complete_bar_ms": { "type": "integer", "minimum": 0 },
+                "lag_ms": { "type": "integer", "minimum": 0 },
+                "bars_lookback_days": { "type": "integer", "minimum": 0 },
+                "bars_total_est": { "type": "integer", "minimum": 0 }
+            }
+        },
+
+        "ohlcv_final": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["1m", "15m", "1h", "4h", "1d"],
+            "properties": {
+                "1m": { "$ref": "#/properties/ohlcv_final_1m" },
+                "15m": { "$ref": "#/properties/ohlcv_final_1m" },
+                "1h": { "$ref": "#/properties/ohlcv_final_1m" },
+                "4h": { "$ref": "#/properties/ohlcv_final_1m" },
+                "1d": { "$ref": "#/properties/ohlcv_final_1m" }
+            }
+        },
+
+        "ohlcv": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["final_1m"],
+            "properties": {
+                "final_1m": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                        "first_open_ms",
+                        "last_close_ms",
+                        "bars",
+                        "coverage_days",
+                        "retention_target_days",
+                        "coverage_ok"
+                    ],
+                    "properties": {
+                        "first_open_ms": { "type": ["integer", "null"], "minimum": 0 },
+                        "last_close_ms": { "type": ["integer", "null"], "minimum": 0 },
+                        "bars": { "type": "integer", "minimum": 0 },
+                        "coverage_days": { "type": "integer", "minimum": 0 },
+                        "retention_target_days": { "type": "integer", "minimum": 0 },
+                        "coverage_ok": { "type": "boolean" }
+                    }
+                }
+            }
+        },
+
+        "history": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "ready",
+                "not_ready_reason",
+                "history_retry_after_ms",
+                "next_trading_open_ms",
+                "backoff_ms",
+                "backoff_active",
+                "last_not_ready_ts_ms"
+            ],
+            "properties": {
+                "ready": { "type": "boolean" },
+                "not_ready_reason": { "type": "string" },
+                "history_retry_after_ms": { "type": "integer", "minimum": 0 },
+                "next_trading_open_ms": { "type": "integer", "minimum": 0 },
+                "backoff_ms": { "type": "integer", "minimum": 0 },
+                "backoff_active": { "type": "boolean" },
+                "last_not_ready_ts_ms": { "type": "integer", "minimum": 0 }
+            }
+        },
+
+        "derived_rebuild": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["last_run_ts_ms", "last_range_ms", "last_tfs", "state", "errors"],
+            "properties": {
+                "last_run_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_range_ms": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "items": { "type": "integer" }
+                },
+                "last_tfs": { "type": "array", "items": { "type": "string" } },
+                "state": { "type": "string", "minLength": 1 },
+                "errors": { "type": "array", "items": { "type": "string" } }
+            }
+        },
+
+        "no_mix": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["conflicts_total", "last_conflict"],
+            "properties": {
+                "conflicts_total": { "type": "integer", "minimum": 0 },
+                "last_conflict": {
+                    "type": ["object", "null"],
+                    "additionalProperties": false,
+                    "required": ["symbol", "tf", "message", "ts"],
+                    "properties": {
+                        "symbol": { "type": "string", "minLength": 1 },
+                        "tf": { "type": "string", "minLength": 1 },
+                        "message": { "type": "string", "minLength": 1 },
+                        "ts": { "type": "integer", "minimum": 0 }
+                    }
+                }
+            }
+        },
+
+        "tail_guard": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["last_audit_ts_ms", "window_hours", "tf_states", "marks", "repaired"],
+            "properties": {
+                "last_audit_ts_ms": { "type": "integer", "minimum": 0 },
+                "window_hours": { "type": "integer", "minimum": 0 },
+                "tf_states": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["1m", "15m", "1h", "4h", "1d"],
+                    "properties": {
+                        "1m": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "15m": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "1h": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "4h": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "1d": { "$ref": "#/definitions/tail_guard_tf_state" }
+                    }
+                },
+                "marks": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["1m", "15m", "1h", "4h", "1d"],
+                    "properties": {
+                        "1m": { "$ref": "#/definitions/tail_guard_mark" },
+                        "15m": { "$ref": "#/definitions/tail_guard_mark" },
+                        "1h": { "$ref": "#/definitions/tail_guard_mark" },
+                        "4h": { "$ref": "#/definitions/tail_guard_mark" },
+                        "1d": { "$ref": "#/definitions/tail_guard_mark" }
+                    }
+                },
+                "repaired": { "type": "boolean" },
+                "near": { "$ref": "#/definitions/tail_guard_tier" },
+                "far": { "$ref": "#/definitions/tail_guard_tier" }
+            }
+        },
+
+        "republish": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "last_run_ts_ms",
+                "last_req_id",
+                "skipped_by_watermark",
+                "forced",
+                "published_batches",
+                "state"
+            ],
+            "properties": {
+                "last_run_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_req_id": { "type": "string" },
+                "skipped_by_watermark": { "type": "boolean" },
+                "forced": { "type": "boolean" },
+                "published_batches": { "type": "integer", "minimum": 0 },
+                "state": { "type": "string", "minLength": 1 }
+            }
+        },
+
+        "command_bus": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["channel", "state", "last_heartbeat_ts_ms", "last_error"],
+            "properties": {
+                "channel": { "type": "string", "minLength": 1 },
+                "state": { "type": "string", "enum": ["running", "error", "disabled"] },
+                "last_heartbeat_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_error": {
+                    "type": ["object", "null"],
+                    "additionalProperties": false,
+                    "required": ["code", "message", "ts"],
+                    "properties": {
+                        "code": { "type": "string", "minLength": 1 },
+                        "message": { "type": "string", "minLength": 1 },
+                        "ts": { "type": "integer", "minimum": 0 }
+                    }
+                }
+            }
+        },
+
+        "last_command": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cmd", "req_id", "state", "started_ts"],
+            "properties": {
+                "cmd": { "type": "string", "minLength": 1 },
+                "req_id": { "type": "string", "minLength": 1 },
+                "state": { "type": "string", "enum": ["running", "ok", "error"] },
+                "started_ts": { "type": "integer", "minimum": 0 },
+                "finished_ts": { "type": "integer", "minimum": 0 },
+                "result": { "type": "object", "additionalProperties": true }
+            }
+        }
+    },
+    "definitions": {
+        "tail_guard_tf_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["missing_bars", "skipped_by_ttl", "state"],
+            "properties": {
+                "missing_bars": { "type": "integer", "minimum": 0 },
+                "skipped_by_ttl": { "type": "boolean" },
+                "state": { "type": "string", "minLength": 1 }
+            }
+        },
+        "tail_guard_mark": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "verified_from_ms",
+                "verified_until_ms",
+                "checked_until_close_ms",
+                "etag_last_complete_bar_ms",
+                "last_audit_ts_ms"
+            ],
+            "properties": {
+                "verified_from_ms": { "type": "integer", "minimum": 0 },
+                "verified_until_ms": { "type": "integer", "minimum": 0 },
+                "checked_until_close_ms": { "type": "integer", "minimum": 0 },
+                "etag_last_complete_bar_ms": { "type": "integer", "minimum": 0 },
+                "last_audit_ts_ms": { "type": "integer", "minimum": 0 }
+            }
+        },
+        "tail_guard_tier": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["last_audit_ts_ms", "window_hours", "tf_states", "marks", "repaired"],
+            "properties": {
+                "last_audit_ts_ms": { "type": "integer", "minimum": 0 },
+                "window_hours": { "type": "integer", "minimum": 0 },
+                "tf_states": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["1m", "15m", "1h", "4h", "1d"],
+                    "properties": {
+                        "1m": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "15m": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "1h": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "4h": { "$ref": "#/definitions/tail_guard_tf_state" },
+                        "1d": { "$ref": "#/definitions/tail_guard_tf_state" }
+                    }
+                },
+                "marks": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["1m", "15m", "1h", "4h", "1d"],
+                    "properties": {
+                        "1m": { "$ref": "#/definitions/tail_guard_mark" },
+                        "15m": { "$ref": "#/definitions/tail_guard_mark" },
+                        "1h": { "$ref": "#/definitions/tail_guard_mark" },
+                        "4h": { "$ref": "#/definitions/tail_guard_mark" },
+                        "1d": { "$ref": "#/definitions/tail_guard_mark" }
+                    }
+                },
+                "repaired": { "type": "boolean" }
+            }
+        }
+    }
+}

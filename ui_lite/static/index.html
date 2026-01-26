@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FXCM UI Lite</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="title">FXCM UI Lite</div>
+      <label class="field">Symbol:
+        <select id="symbol">
+          <option value="XAUUSD" selected>XAUUSD</option>
+        </select>
+      </label>
+      <label class="field">TF:
+        <select id="tf">
+          <option value="1m">1m</option>
+          <option value="5m">5m</option>
+          <option value="15m">15m</option>
+          <option value="1h">1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
+      </label>
+      <label class="field">Mode:
+        <select id="mode">
+          <option value="preview" selected>preview</option>
+          <option value="final">final</option>
+        </select>
+      </label>
+      <label class="field">Series:
+        <select id="series-type">
+          <option value="candle" selected>Candle</option>
+          <option value="bar">Bar</option>
+        </select>
+      </label>
+      <button id="subscribe">Підписатись</button>
+      <button id="fit">Fit</button>
+      <button id="clear">Очистити</button>
+      <div class="indicators">
+        WS age: <span id="ws-age">-</span> ms | bars: <span id="bars-rx">0</span> | підписка: <span id="current-sub">-</span>
+      </div>
+    </header>
+    <main class="chart-wrap">
+      <div id="chart"></div>
+    </main>
+    <footer id="status" class="status">WS: connecting…</footer>
+    <script src="/vendor/lightweight-charts.standalone.production.js"></script>
+    <script src="/chart_adapter.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

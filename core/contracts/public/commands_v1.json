@@ -1,0 +1,12 @@
+{
+  "$id": "commands_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cmd", "req_id", "ts", "args"],
+  "properties": {
+    "cmd": { "type": "string", "minLength": 1 },
+    "req_id": { "type": "string", "minLength": 1 },
+    "ts": { "type": "integer", "minimum": 0 },
+    "args": { "type": "object", "additionalProperties": true }
+  }
+}
