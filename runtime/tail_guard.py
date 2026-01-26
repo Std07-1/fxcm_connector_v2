@@ -71,18 +71,32 @@ def run_tail_guard(
     _ = republish_force
 
     now_ms = int(time.time() * 1000)
-    last_complete_1m = store.get_last_complete_close_ms(symbol)
-    if last_complete_1m <= 0:
+    total_1m = store.count_1m_final(symbol)
+    if total_1m <= 0:
         status.append_error(
             code="ssot_empty",
             severity="error",
             message="SSOT 1m final порожній; tail_guard неможливий",
             context={"symbol": symbol, "window_hours": window_hours},
         )
+        status.record_tail_guard_summary(
+            window_hours=window_hours,
+            tf_states={
+                tf: TailGuardTfState(
+                    missing_bars=0,
+                    status="store_empty" if tf == "1m" else "ssot_empty",
+                    skipped_by_ttl=False,
+                    missing_ranges=[],
+                )
+                for tf in all_tfs
+            },
+            repaired=False,
+            tier=tier,
+        )
         for tf in all_tfs:
             state = TailGuardTfState(
                 missing_bars=0,
-                status="error",
+                status="store_empty" if tf == "1m" else "ssot_empty",
                 skipped_by_ttl=False,
                 missing_ranges=[],
             )
@@ -92,8 +106,9 @@ def run_tail_guard(
             window_hours=window_hours,
             tf_states=tf_states,
             repaired=False,
+            tier=tier,
         )
-        raise ValueError("SSOT 1m final порожній; tail_guard неможливий")
+        return TailGuardSummary(tf_states=tf_states, repaired=False)
 
     for tf in tfs:
         state, mark = _audit_tf(

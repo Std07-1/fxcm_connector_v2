@@ -105,6 +105,6 @@ def test_tail_guard_ssot_empty_loud_error(tmp_path: Path) -> None:
     snap = status.snapshot()
     assert snap["last_command"]["state"] == "error"
     assert any(err.get("code") == "ssot_empty" for err in snap.get("errors", []))
-    tail = snap.get("tail_guard", {})
+    tail = snap.get("tail_guard", {}).get("far", snap.get("tail_guard", {}))
     assert int(tail.get("last_audit_ts_ms", 0)) > 0
-    assert tail.get("tf_states", {}).get("1m", {}).get("state") == "error"
+    assert tail.get("tf_states", {}).get("1m", {}).get("state") == "store_empty"

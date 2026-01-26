@@ -17,6 +17,8 @@ def to_epoch_ms_utc(dt_or_ts: Any) -> int:
         ts_ms = int(dt_or_ts.timestamp() * 1000)
     elif isinstance(dt_or_ts, int):
         ts_ms = int(dt_or_ts)
+    elif isinstance(dt_or_ts, float):
+        raise ContractError("timestamp має бути int ms, не float")
     else:
         raise ContractError("timestamp має бути datetime або int ms")
     if ts_ms < MIN_EPOCH_MS:
