@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core.validation.validator import ContractError
+from core.validation.validator import MAX_EPOCH_MS, ContractError
 
 
 @dataclass(frozen=True)
@@ -27,12 +27,14 @@ class Tick:
 
 
 def _require_int_ms(value: Any, field: str) -> int:
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ContractError(f"{field} має бути int ms")
     if value < 0:
         raise ContractError(f"{field} має бути >= 0")
     if value < 1_000_000_000_000:
         raise ContractError(f"{field} має бути epoch ms (>=1e12)")
+    if value > MAX_EPOCH_MS:
+        raise ContractError(f"{field} має бути epoch ms (не microseconds)")
     return value
 
 

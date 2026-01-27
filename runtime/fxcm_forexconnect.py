@@ -447,17 +447,20 @@ class FxcmForexConnectStream:
             now_ms = int(time.time() * 1000)
             if not self.status.calendar.is_open(now_ms):
                 next_open_ms = _next_open_ms(now_ms, self.config.closed_intervals_utc)
+                reconnect_attempt += 1
+                backoff_s = _backoff_seconds(reconnect_attempt, cap=60.0)
+                retry_ms = max(next_open_ms, int(now_ms + backoff_s * 1000))
                 self.status.update_fxcm_state(
                     state="paused_market_closed",
                     last_tick_ts_ms=0,
                     last_err=None,
                     last_ok_ts_ms=last_ok_ts_ms,
                     reconnect_attempt=reconnect_attempt,
-                    next_retry_ts_ms=next_open_ms,
+                    next_retry_ts_ms=retry_ms,
                 )
                 self.status.publish_snapshot()
-                sleep_ms = max(1000, next_open_ms - now_ms)
-                for _ in range(int(min(sleep_ms, 10_000) / 500)):
+                sleep_ms = max(1000, retry_ms - now_ms)
+                for _ in range(int(min(sleep_ms, 30_000) / 500)):
                     if self._stop_event.is_set():
                         return
                     time.sleep(0.5)
