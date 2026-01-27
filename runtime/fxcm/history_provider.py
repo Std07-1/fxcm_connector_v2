@@ -84,9 +84,13 @@ def _to_ms(value: Any) -> Optional[int]:
     if value is None:
         return None
     if isinstance(value, (int, float)):
+        if isinstance(value, bool):
+            return None
         val = int(value)
         if val < 10**11:
             return int(val * 1000)
+        if val > 9_999_999_999_999:
+            return None
         return val
     if isinstance(value, datetime):
         return int(value.astimezone(timezone.utc).timestamp() * 1000)
