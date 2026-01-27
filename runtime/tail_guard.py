@@ -102,13 +102,7 @@ def run_tail_guard(
             )
             tf_states[tf] = state
             status.record_tail_guard_tf(tf=tf, state=state, window_hours=window_hours)
-        status.record_tail_guard_summary(
-            window_hours=window_hours,
-            tf_states=tf_states,
-            repaired=False,
-            tier=tier,
-        )
-        return TailGuardSummary(tf_states=tf_states, repaired=False)
+        raise ValueError("SSOT 1m final порожній; tail_guard неможливий")
 
     for tf in tfs:
         state, mark = _audit_tf(
