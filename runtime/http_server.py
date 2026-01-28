@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 from config.config import Config
 from runtime.preview_builder import OhlcvCache
-from store.sqlite_store import SQLiteStore
+from store.file_cache import FileCache
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class HttpServer:
     config: Config
     redis_client: Any
     cache: OhlcvCache
-    store: Optional[SQLiteStore] = None
+    file_cache: Optional[FileCache] = None
     _server: Optional[ThreadingHTTPServer] = None
     _thread: Optional[threading.Thread] = None
 
@@ -80,7 +80,7 @@ class HttpServer:
         config = self.config
         redis_client = self.redis_client
         cache = self.cache
-        store = self.store
+        file_cache = self.file_cache
 
         class Handler(BaseHTTPRequestHandler):
             def _send_json(self, payload: Dict[str, Any], status: int = 200) -> None:
@@ -103,6 +103,23 @@ class HttpServer:
                     except json.JSONDecodeError:
                         self._send_json({}, status=500)
                         return
+                    if file_cache is not None:
+                        try:
+                            summary = file_cache.summary("XAUUSD", "1m")
+                            payload["cache"] = {
+                                "enabled": True,
+                                "root": str(config.cache_root),
+                                "rows": int(summary.get("rows", 0)),
+                                "last_close_time_ms": int(summary.get("last_close_time_ms", 0)),
+                            }
+                        except Exception as exc:  # noqa: BLE001
+                            payload["cache"] = {
+                                "enabled": True,
+                                "root": str(config.cache_root),
+                                "error": str(exc),
+                            }
+                    else:
+                        payload["cache"] = {"enabled": False, "root": str(config.cache_root)}
                     self._send_json(payload)
                     return
 
@@ -117,32 +134,29 @@ class HttpServer:
                     except ValueError:
                         limit = 300
                     if mode == "final":
-                        if store is None:
-                            self._send_json({"error": "store не налаштований"}, status=500)
+                        if file_cache is None:
+                            self._send_json({"error": "cache не налаштований"}, status=500)
                             return
-                        if tf == "1m":
-                            rows = store.query_1m_tail(symbol, limit)
-                        elif tf in {"15m", "1h", "4h", "1d"}:
-                            rows = store.query_htf_tail(symbol, tf, limit)
-                        else:
-                            self._send_json(
-                                {"error": "tf не підтримується для final"},
-                                status=400,
-                            )
+                        if tf not in {"1m", "5m", "15m", "1h", "4h", "1d"}:
+                            self._send_json({"error": "tf не підтримується для final"}, status=400)
+                            return
+                        rows = file_cache.query(symbol=symbol, tf=tf, limit=limit)
+                        if not rows:
+                            self._send_json({"error": "cache порожній для tf"}, status=400)
                             return
                         bars = [
                             {
-                                "open_time": r["open_time_ms"],
-                                "close_time": r["close_time_ms"],
-                                "open": r["open"],
-                                "high": r["high"],
-                                "low": r["low"],
-                                "close": r["close"],
-                                "volume": r["volume"],
+                                "open_time": int(r["open_time_ms"]),
+                                "close_time": int(r["close_time_ms"]),
+                                "open": float(r["open"]),
+                                "high": float(r["high"]),
+                                "low": float(r["low"]),
+                                "close": float(r["close"]),
+                                "volume": float(r["volume"]),
                                 "complete": True,
                                 "synthetic": False,
-                                "source": r["source"],
-                                "event_ts": r["event_ts_ms"],
+                                "source": "cache",
+                                "event_ts": int(r["close_time_ms"]),
                             }
                             for r in rows
                         ]

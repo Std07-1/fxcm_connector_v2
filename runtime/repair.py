@@ -11,7 +11,7 @@ from runtime.fxcm.history_budget import HistoryBudget, build_history_budget
 from runtime.fxcm.history_provider import FxcmHistoryProvider
 from runtime.history_provider import HistoryProvider, guard_history_ready
 from runtime.status import StatusManager
-from store.sqlite_store import SQLiteStore
+from store.file_cache import FileCache
 
 
 @dataclass
@@ -22,7 +22,7 @@ class RepairSummary:
 
 def repair_missing_1m(
     config: Config,
-    store: SQLiteStore,
+    file_cache: FileCache,
     provider: HistoryProvider,
     calendar: Calendar,
     status: StatusManager,
@@ -122,10 +122,11 @@ def repair_missing_1m(
         now_ms = int(time.time() * 1000)
         for bar in bars:
             bar["ingest_ts_ms"] = now_ms
-        upserted = store.upsert_1m_final(symbol, bars)
-        if upserted > 0:
+            bar["complete"] = True
+        result = file_cache.append_complete_bars(symbol=symbol, tf="1m", bars=bars, source="history")
+        if result.inserted > 0:
             windows_repaired += 1
-        bars_ingested += int(upserted)
+        bars_ingested += int(result.inserted)
         if metrics is not None:
             metrics.store_upserts_total.inc(len(bars))
 

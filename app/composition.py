@@ -4,7 +4,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import redis
 
@@ -18,23 +18,18 @@ from runtime.fxcm.history_budget import build_history_budget
 from runtime.fxcm.history_provider import FxcmForexConnectHistoryAdapter, FxcmHistoryProvider
 from runtime.fxcm_forexconnect import FxcmForexConnectHandle, FxcmForexConnectStream
 from runtime.handlers_p3 import handle_backfill_command, handle_warmup_command
-from runtime.handlers_p4 import handle_rebuild_derived_command, rebuild_derived_range
 from runtime.history_provider import HistoryProvider, ProviderNotConfiguredError
 from runtime.http_server import HttpServer
 from runtime.no_mix import NoMixDetector
 from runtime.ohlcv_preview import PreviewCandleBuilder, select_closed_bars_for_archive
 from runtime.preview_builder import OhlcvCache
 from runtime.publisher import RedisPublisher
-from runtime.rebuild_derived import DerivedRebuildCoordinator
 from runtime.replay_ticks import ReplayTickHandle, ReplayTickStream
 from runtime.republish import republish_tail
 from runtime.status import StatusManager
 from runtime.tail_guard import run_tail_guard
 from runtime.tick_feed import TickPublisher
-from store.bars_store import BarsStoreSQLite
-from store.file_cache.history_cache import HistoryCache
-from store.live_archive_store import SqliteLiveArchiveStore
-from store.sqlite_store import SQLiteStore
+from store.file_cache import FileCache
 from ui_lite.server import UiLiteHandle, start_ui_lite
 
 log = logging.getLogger("fxcm_p0")
@@ -96,9 +91,14 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
 
-    store = SQLiteStore(db_path=Path(config.store_path))
-    store.init_schema(root_dir / "store" / "schema.sql")
-    bars_store = BarsStoreSQLite(db_path=Path(config.store_path), schema_path=root_dir / "store" / "schema.sql")
+    file_cache: Optional[FileCache] = None
+    if config.cache_enabled:
+        file_cache = FileCache(
+            root=Path(config.cache_root),
+            max_bars=int(config.cache_max_bars),
+            warmup_bars=int(config.cache_warmup_bars),
+            strict=bool(config.cache_strict),
+        )
 
     redis_client = redis.Redis.from_url(config.redis_dsn(), decode_responses=True)
     no_mix = NoMixDetector()
@@ -125,37 +125,13 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     status.build_initial_snapshot()
     publisher.set_status(status)
 
-    live_archive_store: Optional[SqliteLiveArchiveStore] = None
-    live_archive_disabled_reported = False
-    if config.live_archive_enabled:
-        try:
-            live_archive_store = SqliteLiveArchiveStore(db_path=Path(config.live_archive_sqlite_path))
-            live_archive_store.init_schema()
-        except Exception as exc:  # noqa: BLE001
-            status.append_error(
-                code="live_archive_init_failed",
-                severity="error",
-                message=str(exc),
-            )
-            status.mark_degraded("live_archive_init_failed")
-            status.publish_snapshot()
-            raise SystemExit("LiveArchive ініціалізація не вдалася")
-    else:
-        status.mark_degraded("live_archive_disabled")
-        if metrics is not None:
-            metrics.live_archive_write_fail_total.inc()
-        live_archive_disabled_reported = True
-
-    file_cache_by_symbol: dict = {}
-    file_cache_disabled_reported = False
-    if not config.file_cache_enabled:
-        status.mark_degraded("file_cache_disabled")
+    if not config.cache_enabled:
+        status.mark_degraded("cache_disabled")
         status.append_error(
-            code="file_cache_disabled",
+            code="cache_disabled",
             severity="warn",
             message="File cache вимкнений у конфігу",
         )
-        file_cache_disabled_reported = True
 
     history_provider = build_history_provider_for_runtime(config=config, status=status, metrics=metrics)
 
@@ -190,11 +166,14 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     cache = OhlcvCache()
     preview_builder = PreviewCandleBuilder(config=config, cache=cache, status=status)
 
-    http_server = HttpServer(config=config, redis_client=redis_client, cache=cache, store=store)
+    http_server = HttpServer(
+        config=config,
+        redis_client=redis_client,
+        cache=cache,
+        file_cache=file_cache,
+    )
     http_server.start()
     log.info("HTTP chart піднято на порту %s", config.http_port)
-
-    derived_rebuilder = DerivedRebuildCoordinator()
 
     def _select_provider(name: str) -> HistoryProvider:
         if name == "sim":
@@ -213,119 +192,90 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
         raise ValueError("Невідомий provider для історії")
 
     def _publish_final_tail(symbol: str, window_hours: int) -> None:
-        last_close = store.get_last_complete_close_ms(symbol)
-        if last_close <= 0:
+        if file_cache is None:
             return
-        start_ms = last_close - window_hours * 60 * 60 * 1000 + 1
-        t = start_ms
-        while t <= last_close:
-            bars = store.query_range(
-                symbol=symbol,
-                start_ms=t,
-                end_ms=last_close,
-                limit=config.max_bars_per_message,
-            )
-            if not bars:
-                break
-            payload_bars = []
-            for b in bars:
-                bar = {
-                    "open_time": b["open_time_ms"],
-                    "close_time": b["close_time_ms"],
-                    "open": b["open"],
-                    "high": b["high"],
-                    "low": b["low"],
-                    "close": b["close"],
-                    "volume": b["volume"],
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - window_hours * 60 * 60 * 1000
+        bars = file_cache.query(
+            symbol=symbol,
+            tf="1m",
+            limit=config.max_bars_per_message,
+            since_open_ms=start_ms,
+            until_open_ms=end_ms,
+        )
+        if not bars:
+            return
+        payload_bars = []
+        for b in bars:
+            payload_bars.append(
+                {
+                    "open_time": int(b["open_time_ms"]),
+                    "close_time": int(b["close_time_ms"]),
+                    "open": float(b["open"]),
+                    "high": float(b["high"]),
+                    "low": float(b["low"]),
+                    "close": float(b["close"]),
+                    "volume": float(b["volume"]),
                     "complete": True,
                     "synthetic": False,
                     "source": "history",
+                    "event_ts": int(b["close_time_ms"]),
                 }
-                event_ts = b.get("event_ts_ms")
-                if event_ts is not None:
-                    bar["event_ts"] = event_ts
-                payload_bars.append(bar)
-            try:
-                publisher.publish_ohlcv_final_1m(
-                    symbol=symbol,
-                    bars=payload_bars,
-                    validator=validator,
-                )
-            except ContractError as exc:
-                status.append_error(
-                    code="final_ohlcv_contract_error",
-                    severity="error",
-                    message=str(exc),
-                    context={"symbol": symbol},
-                )
-                if metrics is not None:
-                    metrics.ohlcv_final_validation_errors_total.inc()
-            t = int(bars[-1]["open_time_ms"]) + 60_000
-        bars_total_est = store.count_1m_final(symbol)
-        status.record_final_publish(
-            last_complete_bar_ms=int(last_close),
-            now_ms=int(time.time() * 1000),
-            lookback_days=config.warmup_lookback_days,
-            bars_total_est=bars_total_est,
-        )
+            )
+        try:
+            publisher.publish_ohlcv_final_1m(
+                symbol=symbol,
+                bars=payload_bars,
+                validator=validator,
+            )
+        except ContractError as exc:
+            status.append_error(
+                code="final_ohlcv_contract_error",
+                severity="error",
+                message=str(exc),
+                context={"symbol": symbol},
+            )
+            if metrics is not None:
+                metrics.ohlcv_final_validation_errors_total.inc()
         status.publish_snapshot()
-
-    def _rebuild_range_callback(symbol: str, start_ms: int, end_ms: int, tfs: List[str]) -> None:
-        rebuild_derived_range(
-            symbol=symbol,
-            start_ms=start_ms,
-            end_ms=end_ms,
-            tfs=[str(tf) for tf in tfs],
-            config=config,
-            bars_store=bars_store,
-            publisher=publisher,
-            validator=validator,
-            status=status,
-            metrics=metrics,
-        )
 
     def _handle_warmup(payload: dict) -> None:
         args = payload.get("args", {})
         provider_name = str(args.get("provider", ""))
         provider = _select_provider(provider_name)
+        if file_cache is None:
+            raise ValueError("cache вимкнений: warmup неможливий")
         handle_warmup_command(
             payload=payload,
             config=config,
-            store=store,
+            file_cache=file_cache,
             provider=provider,
             status=status,
             metrics=metrics,
             publish_tail=_publish_final_tail,
-            rebuild_callback=_rebuild_range_callback,
+            rebuild_callback=None,
         )
 
     def _handle_backfill(payload: dict) -> None:
         args = payload.get("args", {})
         provider_name = str(args.get("provider", ""))
         provider = _select_provider(provider_name)
+        if file_cache is None:
+            raise ValueError("cache вимкнений: backfill неможливий")
         handle_backfill_command(
             payload=payload,
             config=config,
-            store=store,
+            file_cache=file_cache,
             provider=provider,
             status=status,
             metrics=metrics,
             publish_tail=_publish_final_tail,
-            rebuild_callback=_rebuild_range_callback,
-        )
-
-    def _handle_rebuild_derived(payload: dict) -> None:
-        handle_rebuild_derived_command(
-            payload=payload,
-            config=config,
-            bars_store=bars_store,
-            publisher=publisher,
-            validator=validator,
-            status=status,
-            metrics=metrics,
+            rebuild_callback=None,
         )
 
     def _handle_tail_guard(payload: dict) -> None:
+        if file_cache is None:
+            raise ValueError("cache вимкнений: tail_guard неможливий")
         args = payload.get("args", {})
         symbols = args.get("symbols", ["XAUUSD"])
         if isinstance(symbols, str):
@@ -358,11 +308,10 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
             if near_window_hours > 0 and near_window_hours != window_hours:
                 run_tail_guard(
                     config=config,
-                    store=store,
+                    file_cache=file_cache,
                     calendar=calendar,
                     provider=None,
                     redis_client=redis_client,
-                    derived_rebuilder=derived_rebuilder,
                     publisher=publisher,
                     validator=validator,
                     status=status,
@@ -379,11 +328,10 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
             try:
                 result = run_tail_guard(
                     config=config,
-                    store=store,
+                    file_cache=file_cache,
                     calendar=calendar,
                     provider=provider,
                     redis_client=redis_client,
-                    derived_rebuilder=derived_rebuilder,
                     publisher=publisher,
                     validator=validator,
                     status=status,
@@ -412,6 +360,8 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
             status.publish_snapshot()
 
     def _handle_republish_tail(payload: dict) -> None:
+        if file_cache is None:
+            raise ValueError("cache вимкнений: republish неможливий")
         args = payload.get("args", {})
         symbol = str(args.get("symbol", ""))
         if not symbol:
@@ -423,7 +373,7 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
         force = bool(args.get("force", False))
         republish_tail(
             config=config,
-            store=store,
+            file_cache=file_cache,
             redis_client=redis_client,
             publisher=publisher,
             validator=validator,
@@ -442,7 +392,6 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
         "fxcm_backfill": _handle_backfill,
         "fxcm_tail_guard": _handle_tail_guard,
         "fxcm_republish_tail": _handle_republish_tail,
-        "fxcm_rebuild_derived": _handle_rebuild_derived,
     }
     command_bus = CommandBus(
         redis_client=redis_client,
@@ -523,73 +472,17 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                     last_archived = int(last_archived_open_by_tf.get(tf_name, 0))
                     closed_bars = select_closed_bars_for_archive(bars, last_archived)
                     if closed_bars:
-                        for bar in closed_bars:
-                            if live_archive_store is None:
-                                if not live_archive_disabled_reported:
-                                    status.append_error(
-                                        code="live_archive_disabled",
-                                        severity="warn",
-                                        message="LiveArchive вимкнений у конфігу",
-                                    )
-                                    status.mark_degraded("live_archive_disabled")
-                                    if metrics is not None:
-                                        metrics.live_archive_write_fail_total.inc()
-                                    live_archive_disabled_reported = True
-                                break
-                            result = live_archive_store.insert_bar(
-                                symbol=str(payload.get("symbol")),
-                                tf=tf_name,
-                                open_time_ms=int(bar.get("open_time", 0)),
-                                close_time_ms=int(bar.get("close_time", 0)),
-                                payload=bar,
-                            )
-                            if result.status == "INSERTED":
-                                if metrics is not None:
-                                    metrics.live_archive_insert_total.inc()
-                            elif result.status == "DUPLICATE":
-                                if metrics is not None:
-                                    metrics.live_archive_duplicate_total.inc()
-                                status.append_error(
-                                    code="live_archive_duplicate",
-                                    severity="warn",
-                                    message="LiveArchive дубль",
-                                    context={"symbol": symbol, "tf": tf_name, "open_time_ms": bar.get("open_time")},
-                                )
-                            else:
-                                if metrics is not None:
-                                    metrics.live_archive_write_fail_total.inc()
-                                status.append_error(
-                                    code="live_archive_write_failed",
-                                    severity="error",
-                                    message=str(result.error or "write failed"),
-                                    context={"symbol": symbol, "tf": tf_name, "open_time_ms": bar.get("open_time")},
-                                )
-                                status.mark_degraded("live_archive_write_failed")
-                        if closed_bars:
-                            last_archived_open_by_tf[tf_name] = int(closed_bars[-1].get("open_time", last_archived))
+                        last_archived_open_by_tf[tf_name] = int(closed_bars[-1].get("open_time", last_archived))
                     if tf_name == "1m" and closed_bars:
-                        if not config.file_cache_enabled:
-                            if not file_cache_disabled_reported:
-                                status.append_error(
-                                    code="file_cache_disabled",
-                                    severity="warn",
-                                    message="File cache вимкнений у конфігу",
-                                )
-                                status.mark_degraded("file_cache_disabled")
-                                file_cache_disabled_reported = True
+                        if file_cache is None:
+                            status.append_error(
+                                code="cache_disabled",
+                                severity="warn",
+                                message="File cache вимкнений у конфігу",
+                            )
+                            status.mark_degraded("cache_disabled")
                         else:
                             try:
-                                symbol_key = str(symbol)
-                                cache = file_cache_by_symbol.get(symbol_key)
-                                if cache is None:
-                                    cache = HistoryCache(
-                                        root=Path(config.file_cache_root),
-                                        symbol=symbol_key,
-                                        tf="1m",
-                                        max_bars=int(config.file_cache_max_bars),
-                                        warmup_bars=int(config.file_cache_warmup_bars),
-                                    )
-                                    file_cache_by_symbol[symbol_key] = cache
                                 cache_bars = []
                                 for bar in closed_bars:
                                     cache_bars.append(
@@ -601,33 +494,34 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                                             "low": bar.get("low"),
                                             "close": bar.get("close"),
                                             "volume": bar.get("volume"),
+                                            "tick_count": bar.get("tick_count", 0),
                                             "complete": True,
-                                            "synthetic": bool(bar.get("synthetic", False)),
-                                            "source": str(bar.get("source", "stream")),
-                                            "event_ts": bar.get("close_time"),
+                                            "source": "stream_close",
                                         }
                                     )
-                                result = cache.append_stream_bars(cache_bars)
+                                result = file_cache.append_complete_bars(
+                                    symbol=str(symbol),
+                                    tf="1m",
+                                    bars=cache_bars,
+                                    now_utc=None,
+                                    source="stream_close",
+                                )
                                 if result.duplicates > 0:
                                     status.append_error(
-                                        code="file_cache_duplicate",
+                                        code="cache_duplicate",
                                         severity="warn",
                                         message="File cache дубль open_time_ms",
-                                        context={
-                                            "symbol": symbol,
-                                            "tf": "1m",
-                                            "duplicates": result.duplicates,
-                                        },
+                                        context={"symbol": symbol, "tf": "1m", "duplicates": result.duplicates},
                                     )
-                                    status.mark_degraded("file_cache_duplicate")
+                                    status.mark_degraded("cache_duplicate")
                             except Exception as exc:  # noqa: BLE001
                                 status.append_error(
-                                    code="file_cache_write_failed",
+                                    code="cache_write_failed",
                                     severity="error",
                                     message=str(exc),
                                     context={"symbol": symbol, "tf": "1m"},
                                 )
-                                status.mark_degraded("file_cache_write_failed")
+                                status.mark_degraded("cache_write_failed")
                     last_open = int(bars[-1]["open_time"])
                     status.record_ohlcv_publish(
                         tf=str(payload.get("tf")),

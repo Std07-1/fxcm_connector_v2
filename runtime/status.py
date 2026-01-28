@@ -29,14 +29,6 @@ class PublisherProtocol(Protocol):
     def publish(self, channel: str, json_str: str) -> None: ...
 
 
-class StoreProtocol(Protocol):
-    """Мінімальний контракт SSOT store для 1m final."""
-
-    def get_last_complete_close_ms(self, symbol: str) -> int: ...
-
-    def count_1m_final(self, symbol: str) -> int: ...
-
-
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -885,26 +877,6 @@ class StatusManager:
         entry = final_map.get("1m")
         if isinstance(entry, dict):
             self._snapshot["ohlcv_final_1m"] = dict(entry)
-
-    def sync_final_1m_from_store(
-        self,
-        store: StoreProtocol,
-        symbol: str,
-        lookback_days: int,
-        now_ms: Optional[int],
-    ) -> None:
-        last_close = int(store.get_last_complete_close_ms(symbol))
-        if last_close <= 0:
-            raise ValueError("SSOT 1m final порожній")
-        total = int(store.count_1m_final(symbol))
-        ts_ms = _now_ms() if now_ms is None else int(now_ms)
-        self.record_final_publish(
-            last_complete_bar_ms=last_close,
-            now_ms=ts_ms,
-            lookback_days=int(lookback_days),
-            bars_total_est=total,
-            tf="1m",
-        )
 
     def record_final_1m_coverage(
         self,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import time
 from typing import Any, Callable, Dict, List, Optional
 
 from dateutil import parser as dateutil_parser, tz as dateutil_tz
@@ -12,7 +11,7 @@ from runtime.backfill import run_backfill
 from runtime.history_provider import HistoryProvider
 from runtime.status import StatusManager
 from runtime.warmup import run_warmup
-from store.sqlite_store import SQLiteStore
+from store.file_cache import FileCache
 
 
 def _parse_utc_ms(value: str) -> int:
@@ -25,7 +24,7 @@ def _parse_utc_ms(value: str) -> int:
 def handle_warmup_command(
     payload: Dict[str, Any],
     config: Config,
-    store: SQLiteStore,
+    file_cache: FileCache,
     provider: HistoryProvider,
     status: StatusManager,
     metrics: Optional[Metrics],
@@ -45,53 +44,25 @@ def handle_warmup_command(
         lookback_days = int(args.get("lookback_days", config.warmup_lookback_days))
     publish = bool(args.get("publish", True))
     window_hours = int(args.get("window_hours", 24))
-    rebuild_derived = bool(args.get("rebuild_derived", False))
-    rebuild_tfs = args.get("rebuild_tfs")
-    if rebuild_tfs is None:
-        rebuild_tfs = config.derived_rebuild_default_tfs
-    if isinstance(rebuild_tfs, str):
-        rebuild_tfs = [rebuild_tfs]
-    if not isinstance(rebuild_tfs, list) or not rebuild_tfs:
-        raise ValueError("rebuild_tfs має бути list[str]")
-
     run_warmup(
         config=config,
-        store=store,
+        file_cache=file_cache,
         provider=provider,
         status=status,
         metrics=metrics,
         symbols=symbols,
         lookback_days=lookback_days,
         publish_callback=(lambda sym: publish_tail(sym, window_hours)) if publish else None,
-        rebuild_derived=rebuild_derived,
-        rebuild_timeframes=[str(tf) for tf in rebuild_tfs],
-        rebuild_callback=rebuild_callback if rebuild_derived else None,
+        rebuild_derived=False,
+        rebuild_timeframes=None,
+        rebuild_callback=None,
     )
-
-    now_ms = int(time.time() * 1000)
-    for symbol in symbols:
-        try:
-            status.sync_final_1m_from_store(
-                store=store,
-                symbol=str(symbol),
-                lookback_days=lookback_days,
-                now_ms=now_ms,
-            )
-        except ValueError as exc:
-            status.append_error(
-                code="warmup_empty_history",
-                severity="error",
-                message=str(exc),
-                context={"symbol": str(symbol), "lookback_days": int(lookback_days)},
-            )
-            status.publish_snapshot()
-            raise
 
 
 def handle_backfill_command(
     payload: Dict[str, Any],
     config: Config,
-    store: SQLiteStore,
+    file_cache: FileCache,
     provider: HistoryProvider,
     status: StatusManager,
     metrics: Optional[Metrics],
@@ -114,17 +85,9 @@ def handle_backfill_command(
         raise ValueError("start_ms/end_ms мають бути коректними")
     publish = bool(args.get("publish", True))
     window_hours = int(args.get("window_hours", 24))
-    rebuild_tfs = args.get("rebuild_tfs")
-    if rebuild_tfs is None:
-        rebuild_tfs = config.derived_rebuild_default_tfs
-    if isinstance(rebuild_tfs, str):
-        rebuild_tfs = [rebuild_tfs]
-    if not isinstance(rebuild_tfs, list) or not rebuild_tfs:
-        raise ValueError("rebuild_tfs має бути list[str]")
-
     run_backfill(
         config=config,
-        store=store,
+        file_cache=file_cache,
         provider=provider,
         status=status,
         metrics=metrics,
@@ -132,14 +95,6 @@ def handle_backfill_command(
         start_ms=start_ms,
         end_ms=end_ms,
         publish_callback=(lambda sym: publish_tail(sym, window_hours)) if publish else None,
-        rebuild_timeframes=[str(tf) for tf in rebuild_tfs],
-        rebuild_callback=rebuild_callback,
-    )
-
-    span_days = max(1, int((end_ms - start_ms + 1) / (24 * 60 * 60 * 1000)))
-    status.sync_final_1m_from_store(
-        store=store,
-        symbol=symbol,
-        lookback_days=span_days,
-        now_ms=int(time.time() * 1000),
+        rebuild_timeframes=None,
+        rebuild_callback=None,
     )

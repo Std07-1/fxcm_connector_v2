@@ -9,12 +9,12 @@ from core.validation.validator import ContractError, SchemaValidator
 from observability.metrics import Metrics
 from runtime.publisher import RedisPublisher
 from runtime.status import StatusManager
-from store.sqlite_store import SQLiteStore
+from store.file_cache import FileCache
 
 
 def republish_tail(
     config: Config,
-    store: SQLiteStore,
+    file_cache: FileCache,
     redis_client: Optional[Any],
     publisher: RedisPublisher,
     validator: SchemaValidator,
@@ -52,7 +52,7 @@ def republish_tail(
                 metrics.republish_skipped_total.labels(tf=tf).inc()
             continue
 
-        bars = _load_tail(store, symbol, tf, window_hours)
+        bars = _load_tail(file_cache, symbol, tf, window_hours)
         if bars:
             published_batches += _publish_bars(
                 config=config,
@@ -81,30 +81,25 @@ def republish_tail(
     )
 
 
-def _load_tail(store: SQLiteStore, symbol: str, tf: str, window_hours: int) -> List[dict]:
-    if tf == "1m":
-        limit = int(window_hours * 60)
-        rows = store.query_1m_tail(symbol, limit)
-    else:
-        size = TF_TO_MS.get(tf)
-        if size is None:
-            return []
-        limit = int((window_hours * 60 * 60 * 1000) / size)
-        rows = store.query_htf_tail(symbol, tf, limit)
-
+def _load_tail(file_cache: FileCache, symbol: str, tf: str, window_hours: int) -> List[dict]:
+    size = TF_TO_MS.get(tf)
+    if size is None:
+        return []
+    limit = int((window_hours * 60 * 60 * 1000) / size)
+    rows = file_cache.query(symbol=symbol, tf=tf, limit=limit)
     return [
         {
-            "open_time": r["open_time_ms"],
-            "close_time": r["close_time_ms"],
-            "open": r["open"],
-            "high": r["high"],
-            "low": r["low"],
-            "close": r["close"],
-            "volume": r["volume"],
+            "open_time": int(r["open_time_ms"]),
+            "close_time": int(r["close_time_ms"]),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+            "volume": float(r["volume"]),
             "complete": True,
             "synthetic": False,
-            "source": r["source"],
-            "event_ts": r["event_ts_ms"],
+            "source": "cache",
+            "event_ts": int(r["close_time_ms"]),
         }
         for r in rows
     ]
