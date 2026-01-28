@@ -254,7 +254,10 @@ def load_config(profile: Optional[str] = None) -> Config:
         probe = root / ".cache_write_probe"
         try:
             probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
+            try:
+                probe.unlink()
+            except FileNotFoundError:
+                pass
         except Exception as exc:  # noqa: BLE001
             raise ValueError("cache_root не writable") from exc
     return cfg

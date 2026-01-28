@@ -2,12 +2,13 @@
 
 ## Короткий опис
 
-FXCM Connector vNext — конектор для FXCM із реальним стрімом через ForexConnect, побудовою preview OHLCV у realtime, зберіганням final 1m у SQLite та статусним API/моніторингом. Орієнтований на Python 3.7, суворі контракти (JSON Schema) і fail‑fast валідацію. REST/fxcmpy не використовується.
+FXCM Connector vNext — конектор для FXCM із реальним стрімом через ForexConnect. Підтримує побудову preview OHLCV у realtime, зберігання final 1m у FileCache (CSV + meta.json) та статусний API/моніторинг.
+Орієнтований на Python 3.7, суворі контракти (JSON Schema) і fail‑fast валідацію. REST/fxcmpy не використовується.
 
 ## Ключові можливості
 
 - **Live preview OHLCV** (1m + HTF) з жорсткими рейками часу/сортування/дедуп.
-- **SSOT final 1m** у SQLite з інваріантами та derived HTF (history_agg).
+- **SSOT final 1m** у FileCache (CSV + meta.json) з інваріантами.
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
 - **UI Lite** як канонічна UI (HTTP + WS + /debug, health/STALE/overlay).
 - **Exit gates** як SSOT контроль якості (tools/run_exit_gates.py).
@@ -21,7 +22,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 
 ### HTTP
 - **/api/status** — читає status snapshot.
-- **/api/ohlcv** — preview з in‑memory cache, final зі SQLite.
+- **/api/ohlcv** — preview з in‑memory cache, final з FileCache.
 - **/chart** — redirect на UI Lite або 503, якщо UI Lite вимкнено.
 
 ### UI Lite
@@ -33,7 +34,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 
 - **SSOT контракти**: core/contracts/public/*.json.
 - **SSOT preview builder**: core/market/preview_builder.py (runtime — thin wrapper).
-- **SSOT storage**: store/sqlite_store.py + store/schema.sql.
+- **SSOT storage**: cache/*.csv + *.meta.json через FileCache.
 - **Режими runtime**: FOREXCONNECT / REPLAY / DISABLED (SIM заборонено).
 - **Без silent fallback**: помилки → errors[]/degraded[] або hard fail.
 
@@ -91,7 +92,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 - **core/** — доменна SSOT логіка: контракти/валидація, календар/час, ринкові типи, runtime‑режими.
 - **runtime/** — виконання: HTTP API, command bus, tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
 - **observability/** — метрики/Prometheus.
-- **store/** — SQLite сховище, schema, derived‑логіка.
+- **store/** — FileCache як SSOT.
 - **ui_lite/** — єдина канонічна UI (static + debug endpoint).
 - **tests/** — unit/contract/gate тести; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
@@ -136,8 +137,8 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   `-- validation/                    # валідатори контрактів
 |       `-- validator.py               # schema + rails
 |-- data/                              # локальні артефакти/бази/аудити
-|   |-- audit_*/                        # audit snapshots та логи
-|   `-- ohlcv_final.sqlite             # локальне SQLite сховище
+|   `-- audit_*/                        # audit snapshots та логи
+|-- cache/                             # FileCache (CSV + meta.json) — SSOT
 |-- deploy/                            # інструкції запуску
 |   `-- runbook_fxcm_forexconnect.md   # runbook для FXCM
 |-- docs/                              # SSOT документація
@@ -165,9 +166,8 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- handlers_p4.py                 # handler'и P4
 |   |-- ohlcv_preview.py               # preview обгортка
 |   |-- preview_builder.py             # thin wrapper над core preview builder
-|   |-- tail_guard.py                  # tail_guard логіка (near/far tiers + marks + repair)
+|   |-- tail_guard.py                  # tail_guard (1m через FileCache, repair + republish)
 |   |-- republish.py                   # republish логіка
-|   |-- rebuild_derived.py             # rebuild derived
 |   |-- backfill.py                    # backfill логіка
 |   |-- warmup.py                      # warmup логіка
 |   |-- no_mix.py                      # rails на мікс потоків
@@ -177,10 +177,8 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- ohlcv_sim*.py                  # runtime sim заборонено (rail)
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
-|-- store/                             # SQLite storage
-|   |-- schema.sql                     # SSOT схема БД
-|   |-- sqlite_store.py                # доступ до БД
-|   `-- derived_builder.py             # derived OHLCV
+|-- store/                             # FileCache SSOT
+|   `-- file_cache/                    # FileCache (CSV + meta.json)
 |-- tests/                             # unit/contract/gate тести
 |   |-- fixtures/                      # test fixtures (JSON/JSONL)
 |   `-- test_*.py                      # тести на rails/контракти

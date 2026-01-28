@@ -6,7 +6,7 @@
 - **core/** — доменна SSOT логіка: контракти/валидація, календар/час, ринкові типи, runtime‑режими.
 - **runtime/** — виконання: HTTP API, command bus, tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
 - **observability/** — метрики/Prometheus.
-- **store/** — FileCache (CSV + meta) як SSOT; legacy SQLite/derived/live_archive ще в репозиторії (міграція у процесі).
+- **store/** — FileCache (CSV + meta.json) як SSOT (єдина персистентність).
 - **ui_lite/** — єдина канонічна UI (static + debug endpoint).
 - **tests/** — unit/contract/gate тести; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
@@ -57,8 +57,7 @@
 |   `-- validation/                    # валідатори контрактів
 |       `-- validator.py               # schema + rails
 |-- data/                              # локальні артефакти/бази/аудити
-|   |-- audit_*/                        # audit snapshots та логи
-|   `-- ohlcv_final.sqlite             # legacy SQLite артефакт (не SSOT)
+|   `-- audit_*/                        # audit snapshots та логи
 |-- cache/                             # FileCache (CSV + meta.json) — SSOT
 |-- deploy/                            # інструкції запуску
 |   `-- runbook_fxcm_forexconnect.md   # runbook для FXCM
@@ -90,7 +89,6 @@
 |   |-- preview_builder.py             # thin wrapper над core preview builder
 |   |-- tail_guard.py                  # tail_guard (1m через FileCache, repair + republish)
 |   |-- republish.py                   # republish логіка
-|   |-- rebuild_derived.py             # legacy rebuild derived (винесено у downstream)
 |   |-- backfill.py                    # backfill логіка
 |   |-- warmup.py                      # warmup логіка
 |   |-- no_mix.py                      # rails на мікс потоків
@@ -101,13 +99,9 @@
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
 |-- store/                             # FileCache SSOT (CSV + meta)
-|   |-- file_cache/                    # FileCache (CSV + meta.json)
-|   |   |-- cache_utils.py             # SSOT rails/columns/merge+trim
-|   |   `-- history_cache.py           # FileCache API
-|   |-- schema.sql                     # legacy SQLite схема (міграція у процесі)
-|   |-- sqlite_store.py                # legacy SQLite доступ
-|   |-- live_archive_store.py          # legacy LiveArchive evidence store
-|   `-- derived_builder.py             # legacy derived OHLCV
+|   `-- file_cache/                    # FileCache (CSV + meta.json)
+|       |-- cache_utils.py             # SSOT rails/columns/merge+trim
+|       `-- history_cache.py           # FileCache API
 |-- tests/                             # unit/contract/gate тести
 |   |-- fixtures/                      # test fixtures (JSON/JSONL)
 |   `-- test_*.py                      # тести на rails/контракти
@@ -128,8 +122,9 @@
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
 |           |-- gate_calendar_schedule_drift.py # rail: schedule drift (daily break + weekly boundary)
 |           |-- gate_calendar_closed_intervals.py # rail: валідація closed_intervals_utc
-|           |-- gate_live_archive_sqlite.py # rail: live_archive sqlite
 |           |-- gate_file_cache_schema.py # rail: file cache schema/semantics
+|           |-- gate_cache_integrity.py   # rail: FileCache integrity
+|           |-- gate_no_sqlite_left.py    # rail: відсутність sqlite-маркерів
 |-- ui_lite/                           # канонічна UI. “oscilloscope” для конектора
 |   |-- server.py                      # UI Lite HTTP + /debug + inbound OHLCV/status validation + health WS (N/A/STALE)
 |   `-- static/                        # UI Lite static assets

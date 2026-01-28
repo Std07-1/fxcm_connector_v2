@@ -17,14 +17,6 @@ class _DummyRedis:
         return None
 
 
-class _DummyStore:
-    def get_last_complete_close_ms(self, symbol: str) -> int:
-        return 1_736_980_019_999
-
-    def count_1m_final(self, symbol: str) -> int:
-        return 456
-
-
 def test_status_final_1m_ssot() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     config = Config()
@@ -42,11 +34,11 @@ def test_status_final_1m_ssot() -> None:
     )
     status.build_initial_snapshot()
 
-    status.sync_final_1m_from_store(
-        store=_DummyStore(),
-        symbol="XAUUSD",
-        lookback_days=2,
+    status.record_final_publish(
+        last_complete_bar_ms=1_736_980_019_999,
         now_ms=1_736_980_020_000,
+        lookback_days=2,
+        bars_total_est=456,
     )
 
     snapshot = status.snapshot()

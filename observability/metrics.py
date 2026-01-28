@@ -53,9 +53,6 @@ class Metrics:
     no_mix_conflicts_total: Counter
     htf_final_bars_upserted_total: Counter
     status_payload_too_large_total: Counter
-    live_archive_insert_total: Counter
-    live_archive_duplicate_total: Counter
-    live_archive_write_fail_total: Counter
 
 
 def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
@@ -63,21 +60,6 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         "connector_commands_total",
         "Кількість оброблених команд",
         ["cmd", "state"],
-        registry=registry,
-    )
-    live_archive_insert_total = Counter(
-        "connector_live_archive_insert_total",
-        "Кількість вставок у live_archive",
-        registry=registry,
-    )
-    live_archive_duplicate_total = Counter(
-        "connector_live_archive_duplicate_total",
-        "Кількість дублікатів у live_archive",
-        registry=registry,
-    )
-    live_archive_write_fail_total = Counter(
-        "connector_live_archive_write_fail_total",
-        "Кількість помилок запису live_archive",
         registry=registry,
     )
     errors_total = Counter(
@@ -346,9 +328,6 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         no_mix_conflicts_total=no_mix_conflicts_total,
         htf_final_bars_upserted_total=htf_final_bars_upserted_total,
         status_payload_too_large_total=status_payload_too_large_total,
-        live_archive_insert_total=live_archive_insert_total,
-        live_archive_duplicate_total=live_archive_duplicate_total,
-        live_archive_write_fail_total=live_archive_write_fail_total,
     )
 
 

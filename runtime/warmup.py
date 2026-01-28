@@ -19,9 +19,6 @@ def run_warmup(
     symbols: List[str],
     lookback_days: int,
     publish_callback: Optional[Callable[[str], None]],
-    rebuild_derived: bool = False,
-    rebuild_timeframes: Optional[List[str]] = None,
-    rebuild_callback: Optional[Callable[[str, int, int, List[str]], None]] = None,
 ) -> None:
     real_now_ms = int(time.time() * 1000)
     end_close_ms = real_now_ms - (real_now_ms % 60_000) - 1
@@ -77,6 +74,3 @@ def run_warmup(
             lookback_days=lookback_days,
             bars_total_est=bars_total_est,
         )
-        if rebuild_derived and rebuild_callback is not None:
-            tfs = rebuild_timeframes or ["15m", "1h", "4h", "1d"]
-            rebuild_callback(symbol, start_ms, now_ms, tfs)

@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Tuple
 
 from store.file_cache.cache_utils import CACHE_COLUMNS, CACHE_VERSION, validate_geometry
-from store.file_cache.history_cache import HistoryCache
+from store.file_cache.history_cache import FileCache
 from tools.run_exit_gates import fail_direct_gate_run
 
 
@@ -22,9 +22,7 @@ def _build_bar(open_ms: int) -> Dict[str, Any]:
         "close": 1.05,
         "volume": 10.0,
         "complete": True,
-        "synthetic": False,
-        "source": "stream",
-        "event_ts": close_ms,
+        "source": "stream_close",
     }
 
 
@@ -32,21 +30,21 @@ def _read_csv(path: Path) -> Tuple[List[str], List[Dict[str, Any]]]:
     with path.open("r", encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         fieldnames = list(reader.fieldnames or [])
-        rows = [row for row in reader]
+        rows = [dict(row) for row in reader]
     return fieldnames, rows
 
 
 def run() -> Tuple[bool, str]:
     with TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
-        cache = HistoryCache(root=root, symbol="XAU/USD", tf="1m", max_bars=100, warmup_bars=0)
+        cache = FileCache(root=root, max_bars=100, warmup_bars=0, strict=True)
         base = 1_699_999_980_000
         bars = [
             _build_bar(base),
             _build_bar(base + 60_000),
             _build_bar(base + 120_000),
         ]
-        cache.append_stream_bars(bars)
+        cache.append_complete_bars(symbol="XAU/USD", tf="1m", bars=bars)
 
         csv_path = root / "XAUUSD_1m.csv"
         meta_path = root / "XAUUSD_1m.meta.json"

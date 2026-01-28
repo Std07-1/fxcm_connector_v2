@@ -53,9 +53,6 @@ def handle_warmup_command(
         symbols=symbols,
         lookback_days=lookback_days,
         publish_callback=(lambda sym: publish_tail(sym, window_hours)) if publish else None,
-        rebuild_derived=False,
-        rebuild_timeframes=None,
-        rebuild_callback=None,
     )
 
 
