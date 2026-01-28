@@ -22,7 +22,7 @@ from runtime.handlers_p4 import handle_rebuild_derived_command, rebuild_derived_
 from runtime.history_provider import HistoryProvider, ProviderNotConfiguredError
 from runtime.http_server import HttpServer
 from runtime.no_mix import NoMixDetector
-from runtime.ohlcv_preview import PreviewCandleBuilder
+from runtime.ohlcv_preview import PreviewCandleBuilder, select_closed_bars_for_archive
 from runtime.preview_builder import OhlcvCache
 from runtime.publisher import RedisPublisher
 from runtime.rebuild_derived import DerivedRebuildCoordinator
@@ -32,6 +32,8 @@ from runtime.status import StatusManager
 from runtime.tail_guard import run_tail_guard
 from runtime.tick_feed import TickPublisher
 from store.bars_store import BarsStoreSQLite
+from store.file_cache.history_cache import HistoryCache
+from store.live_archive_store import SqliteLiveArchiveStore
 from store.sqlite_store import SQLiteStore
 from ui_lite.server import UiLiteHandle, start_ui_lite
 
@@ -122,6 +124,38 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     )
     status.build_initial_snapshot()
     publisher.set_status(status)
+
+    live_archive_store: Optional[SqliteLiveArchiveStore] = None
+    live_archive_disabled_reported = False
+    if config.live_archive_enabled:
+        try:
+            live_archive_store = SqliteLiveArchiveStore(db_path=Path(config.live_archive_sqlite_path))
+            live_archive_store.init_schema()
+        except Exception as exc:  # noqa: BLE001
+            status.append_error(
+                code="live_archive_init_failed",
+                severity="error",
+                message=str(exc),
+            )
+            status.mark_degraded("live_archive_init_failed")
+            status.publish_snapshot()
+            raise SystemExit("LiveArchive ініціалізація не вдалася")
+    else:
+        status.mark_degraded("live_archive_disabled")
+        if metrics is not None:
+            metrics.live_archive_write_fail_total.inc()
+        live_archive_disabled_reported = True
+
+    file_cache_by_symbol: dict = {}
+    file_cache_disabled_reported = False
+    if not config.file_cache_enabled:
+        status.mark_degraded("file_cache_disabled")
+        status.append_error(
+            code="file_cache_disabled",
+            severity="warn",
+            message="File cache вимкнений у конфігу",
+        )
+        file_cache_disabled_reported = True
 
     history_provider = build_history_provider_for_runtime(config=config, status=status, metrics=metrics)
 
@@ -445,6 +479,7 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     )
 
     last_ohlcv_log_by_tf: dict = {}
+    last_archived_open_by_tf: dict = {}
 
     def _handle_fxcm_tick(
         symbol: str,
@@ -484,13 +519,121 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                         source=str(payload.get("source", "stream")),
                         validator=validator,
                     )
+                    tf_name = str(payload.get("tf"))
+                    last_archived = int(last_archived_open_by_tf.get(tf_name, 0))
+                    closed_bars = select_closed_bars_for_archive(bars, last_archived)
+                    if closed_bars:
+                        for bar in closed_bars:
+                            if live_archive_store is None:
+                                if not live_archive_disabled_reported:
+                                    status.append_error(
+                                        code="live_archive_disabled",
+                                        severity="warn",
+                                        message="LiveArchive вимкнений у конфігу",
+                                    )
+                                    status.mark_degraded("live_archive_disabled")
+                                    if metrics is not None:
+                                        metrics.live_archive_write_fail_total.inc()
+                                    live_archive_disabled_reported = True
+                                break
+                            result = live_archive_store.insert_bar(
+                                symbol=str(payload.get("symbol")),
+                                tf=tf_name,
+                                open_time_ms=int(bar.get("open_time", 0)),
+                                close_time_ms=int(bar.get("close_time", 0)),
+                                payload=bar,
+                            )
+                            if result.status == "INSERTED":
+                                if metrics is not None:
+                                    metrics.live_archive_insert_total.inc()
+                            elif result.status == "DUPLICATE":
+                                if metrics is not None:
+                                    metrics.live_archive_duplicate_total.inc()
+                                status.append_error(
+                                    code="live_archive_duplicate",
+                                    severity="warn",
+                                    message="LiveArchive дубль",
+                                    context={"symbol": symbol, "tf": tf_name, "open_time_ms": bar.get("open_time")},
+                                )
+                            else:
+                                if metrics is not None:
+                                    metrics.live_archive_write_fail_total.inc()
+                                status.append_error(
+                                    code="live_archive_write_failed",
+                                    severity="error",
+                                    message=str(result.error or "write failed"),
+                                    context={"symbol": symbol, "tf": tf_name, "open_time_ms": bar.get("open_time")},
+                                )
+                                status.mark_degraded("live_archive_write_failed")
+                        if closed_bars:
+                            last_archived_open_by_tf[tf_name] = int(closed_bars[-1].get("open_time", last_archived))
+                    if tf_name == "1m" and closed_bars:
+                        if not config.file_cache_enabled:
+                            if not file_cache_disabled_reported:
+                                status.append_error(
+                                    code="file_cache_disabled",
+                                    severity="warn",
+                                    message="File cache вимкнений у конфігу",
+                                )
+                                status.mark_degraded("file_cache_disabled")
+                                file_cache_disabled_reported = True
+                        else:
+                            try:
+                                symbol_key = str(symbol)
+                                cache = file_cache_by_symbol.get(symbol_key)
+                                if cache is None:
+                                    cache = HistoryCache(
+                                        root=Path(config.file_cache_root),
+                                        symbol=symbol_key,
+                                        tf="1m",
+                                        max_bars=int(config.file_cache_max_bars),
+                                        warmup_bars=int(config.file_cache_warmup_bars),
+                                    )
+                                    file_cache_by_symbol[symbol_key] = cache
+                                cache_bars = []
+                                for bar in closed_bars:
+                                    cache_bars.append(
+                                        {
+                                            "open_time": bar.get("open_time"),
+                                            "close_time": bar.get("close_time"),
+                                            "open": bar.get("open"),
+                                            "high": bar.get("high"),
+                                            "low": bar.get("low"),
+                                            "close": bar.get("close"),
+                                            "volume": bar.get("volume"),
+                                            "complete": True,
+                                            "synthetic": bool(bar.get("synthetic", False)),
+                                            "source": str(bar.get("source", "stream")),
+                                            "event_ts": bar.get("close_time"),
+                                        }
+                                    )
+                                result = cache.append_stream_bars(cache_bars)
+                                if result.duplicates > 0:
+                                    status.append_error(
+                                        code="file_cache_duplicate",
+                                        severity="warn",
+                                        message="File cache дубль open_time_ms",
+                                        context={
+                                            "symbol": symbol,
+                                            "tf": "1m",
+                                            "duplicates": result.duplicates,
+                                        },
+                                    )
+                                    status.mark_degraded("file_cache_duplicate")
+                            except Exception as exc:  # noqa: BLE001
+                                status.append_error(
+                                    code="file_cache_write_failed",
+                                    severity="error",
+                                    message=str(exc),
+                                    context={"symbol": symbol, "tf": "1m"},
+                                )
+                                status.mark_degraded("file_cache_write_failed")
                     last_open = int(bars[-1]["open_time"])
                     status.record_ohlcv_publish(
                         tf=str(payload.get("tf")),
                         bar_open_time_ms=last_open,
                         publish_ts_ms=now_ms,
                     )
-                    tf_name = str(payload.get("tf"))
                     last_log = int(last_ohlcv_log_by_tf.get(tf_name, 0))
                     if now_ms - last_log >= 10_000:
                         log.info(

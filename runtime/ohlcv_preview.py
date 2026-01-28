@@ -31,3 +31,17 @@ class PreviewCandleBuilder:
 
     def mark_published(self, now_ms: int) -> None:
         self._inner.mark_published(now_ms)
+
+
+def select_closed_bars_for_archive(
+    bars: List[Dict[str, Any]],
+    last_archived_open_ms: int,
+) -> List[Dict[str, Any]]:
+    if len(bars) < 2:
+        return []
+    closed = []
+    for bar in bars[:-1]:
+        open_ms = int(bar.get("open_time", 0))
+        if open_ms > int(last_archived_open_ms):
+            closed.append(bar)
+    return closed

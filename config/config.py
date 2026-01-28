@@ -48,6 +48,10 @@ class Config:
     max_bars_per_message: int = 512  # макс барів в одному повідомленні OHLCV
 
     store_path: str = "data/ohlcv_final.sqlite"  # шлях до локального сховища OHLCV
+    file_cache_enabled: bool = True
+    file_cache_root: str = "data/file_cache"
+    file_cache_max_bars: int = 20000
+    file_cache_warmup_bars: int = 5000
     retention_days: int = 7  # кількість днів збереження історії в сховищі
     retention_target_days: int = 7  # SSOT ціль покриття retention для 1m final
     warmup_lookback_days: int = 7  # кількість днів для прогріву при старті
@@ -103,6 +107,10 @@ class Config:
     ohlcv_preview_tfs: List[str] = field(default_factory=lambda: ["1m", "5m", "15m", "1h", "4h", "1d"])
     ohlcv_preview_publish_interval_ms: int = 250
     ohlcv_sim_enabled: bool = False  # чи увімкнено симуляцію OHLCV прев'ю
+
+    live_archive_enabled: bool = True
+    live_archive_sqlite_path: str = "data/live_archive.sqlite"
+    live_archive_seed_read_limit: int = 500
 
     http_port: int = 8088
 
@@ -243,4 +251,6 @@ def load_config(profile: Optional[str] = None) -> Config:
     )
     if cfg.redis_required and not cfg.redis_password and not cfg.redis_url:
         raise ValueError("FXCM_REDIS_REQUIRED=true, але redis_password/redis_url не задані")
+    if cfg.live_archive_enabled and str(cfg.live_archive_sqlite_path).strip() == ":memory:":
+        raise ValueError("live_archive_sqlite_path не може бути :memory:")
     return cfg

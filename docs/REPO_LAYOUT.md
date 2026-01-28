@@ -6,7 +6,7 @@
 - **core/** — доменна SSOT логіка: контракти/валидація, календар/час, ринкові типи, runtime‑режими.
 - **runtime/** — виконання: HTTP API, command bus, tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
 - **observability/** — метрики/Prometheus.
-- **store/** — SQLite сховище, schema, derived‑логіка.
+- **store/** — SQLite сховище, file cache (CSV + meta), schema, derived‑логіка.
 - **ui_lite/** — єдина канонічна UI (static + debug endpoint).
 - **tests/** — unit/contract/gate тести; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
@@ -58,6 +58,7 @@
 |       `-- validator.py               # schema + rails
 |-- data/                              # локальні артефакти/бази/аудити
 |   |-- audit_*/                        # audit snapshots та логи
+|   |-- file_cache/                    # FileCache (CSV + meta.json)
 |   `-- ohlcv_final.sqlite             # локальне SQLite сховище
 |-- deploy/                            # інструкції запуску
 |   `-- runbook_fxcm_forexconnect.md   # runbook для FXCM
@@ -99,10 +100,14 @@
 |   |-- ohlcv_sim*.py                  # runtime sim заборонено (rail)
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
-|-- store/                             # SQLite storage
+|-- store/                             # SQLite storage + FileCache
 |   |-- schema.sql                     # SSOT схема БД
 |   |-- sqlite_store.py                # доступ до БД
-|   `-- derived_builder.py             # derived OHLCV
+|   |-- live_archive_store.py          # LiveArchive evidence store (append-only)
+|   |-- derived_builder.py             # derived OHLCV
+|   `-- file_cache/                    # FileCache (CSV + meta.json)
+|       |-- cache_utils.py             # SSOT rails/columns/merge+trim
+|       `-- history_cache.py           # HistoryCache API
 |-- tests/                             # unit/contract/gate тести
 |   |-- fixtures/                      # test fixtures (JSON/JSONL)
 |   `-- test_*.py                      # тести на rails/контракти
@@ -123,6 +128,8 @@
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
 |           |-- gate_calendar_schedule_drift.py # rail: schedule drift (daily break + weekly boundary)
 |           |-- gate_calendar_closed_intervals.py # rail: валідація closed_intervals_utc
+|           |-- gate_live_archive_sqlite.py # rail: live_archive sqlite
+|           |-- gate_file_cache_schema.py # rail: file cache schema/semantics
 |-- ui_lite/                           # канонічна UI. “oscilloscope” для конектора
 |   |-- server.py                      # UI Lite HTTP + /debug + inbound OHLCV/status validation + health WS (N/A/STALE)
 |   `-- static/                        # UI Lite static assets
