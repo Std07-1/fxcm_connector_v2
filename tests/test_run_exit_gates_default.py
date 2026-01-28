@@ -25,7 +25,5 @@ def test_run_exit_gates_default_manifest(tmp_path: Path) -> None:
     )
     if result.returncode != 0:
         raise AssertionError(
-            "run_exit_gates повернув ненульовий код:\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}\n"
+            "run_exit_gates повернув ненульовий код:\n" f"stdout:\n{result.stdout}\n" f"stderr:\n{result.stderr}\n"
         )
