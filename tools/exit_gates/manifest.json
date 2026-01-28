@@ -14,6 +14,7 @@
   {"id": "gate_tick_fixtures_schema", "module": "tools.exit_gates.gates.gate_tick_fixtures_schema", "fn": "run"},
   {"id": "gate_history_tf_rail_scan", "module": "tools.exit_gates.gates.gate_history_tf_rail_scan", "fn": "run"},
   {"id": "gate_calendar_xau_next_open_matches_23utc", "module": "tools.exit_gates.gates.gate_calendar_xau_next_open_matches_23utc", "fn": "run"},
+  {"id": "gate_calendar_closed_intervals", "module": "tools.exit_gates.gates.gate_calendar_closed_intervals", "fn": "run"},
   {"id": "gate_calendar_schedule_drift", "module": "tools.exit_gates.gates.gate_calendar_schedule_drift", "fn": "run"},
   {"id": "gate_final_wire_from_store", "module": "tools.exit_gates.gates.gate_final_wire_from_store", "fn": "run"},
   {"id": "gate_tail_guard_marks_persist", "module": "tools.exit_gates.gates.gate_tail_guard_marks_persist", "fn": "run"},

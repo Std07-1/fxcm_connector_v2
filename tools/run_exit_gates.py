@@ -33,6 +33,15 @@ def _load_manifest(path: Path) -> List[Dict[str, Any]]:
     return data
 
 
+def fail_direct_gate_run(gate_name: str) -> None:
+    print(
+        "FAIL: прямий запуск gate_*.py заборонено. "
+        f"Використай python -m tools.exit_gates.gates.{gate_name} "
+        "або python -m tools.run_exit_gates --out <dir> --manifest <path>"
+    )
+    sys.exit(1)
+
+
 def _run_gate(entry: Dict[str, Any]) -> Dict[str, Any]:
     gate_id = str(entry.get("id"))
     module_name = str(entry.get("module"))

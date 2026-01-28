@@ -115,7 +115,9 @@
 |   |-- record_ticks.py                # запис ticks (ops)
 |   |-- replay_ticks.py                # thin wrapper → runtime.replay_ticks
 |   `-- exit_gates/                    # manifests + gate modules
-|       |-- manifest*.json             # набори gate'ів
+|       |-- manifest.json              # дефолтний manifest (містить календарні гейти)
+|       |-- manifest_p1_calendar.json  # календарні гейти (точковий запуск)
+|       |-- manifest*.json             # інші набори gate'ів
 |       `-- gates/                     # окремі gate'и
 |           |-- gate_tick_event_time_not_wallclock.py # rail: tick_ts_ms не з wall-clock
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
