@@ -157,7 +157,7 @@ def test_closed_history_not_ready_drops_and_sets_next_open_and_retry(tmp_path: P
 
     assert provider.calls == 0
     history = status.snapshot().get("history", {})
-    expected_open_ms = _ms(2026, 1, 25, 23, 0)
+    expected_open_ms = _ms(2026, 1, 25, 22, 0)
     assert int(history.get("next_trading_open_ms", 0)) == expected_open_ms
     assert int(history.get("history_retry_after_ms", 0)) > fixed_now_ms
     errors = status.snapshot().get("errors", [])

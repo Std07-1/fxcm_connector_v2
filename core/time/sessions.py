@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date as _date, datetime, time, timedelta, timezone, tzinfo
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from dateutil import tz as _tz
+
+from core.time.closed_intervals import normalize_closed_intervals_utc
 
 try:
     from zoneinfo import ZoneInfo  # type: ignore
@@ -22,7 +26,7 @@ DEFAULT_DAILY_BREAK_START = "17:00"
 DEFAULT_DAILY_BREAK_MINUTES = 5
 
 
-def _parse_hhmm(value: str) -> time:
+def _parse_hhmm(value: str) -> Tuple[int, int]:
     parts = value.split(":")
     if len(parts) != 2:
         raise ValueError("час має формат HH:MM")
@@ -30,7 +34,126 @@ def _parse_hhmm(value: str) -> time:
     minute = int(parts[1])
     if hour < 0 or hour > 23 or minute < 0 or minute > 59:
         raise ValueError("час має коректні межі")
+    return hour, minute
+
+
+def _time_from_hhmm(value: str) -> time:
+    hour, minute = _parse_hhmm(value)
     return time(hour=hour, minute=minute)
+
+
+def _minutes_between(start_hhmm: str, end_hhmm: str) -> int:
+    start_h, start_m = _parse_hhmm(start_hhmm)
+    end_h, end_m = _parse_hhmm(end_hhmm)
+    start_total = start_h * 60 + start_m
+    end_total = end_h * 60 + end_m
+    if end_total <= start_total:
+        raise ValueError("кінець daily break має бути після початку")
+    return end_total - start_total
+
+
+def _resolve_tz_or_raise(tz_name: str) -> tzinfo:
+    if tz_name.upper() == "UTC" or tz_name == "Etc/UTC":
+        return timezone.utc
+    if ZoneInfo is not None:
+        try:
+            return cast(tzinfo, ZoneInfo(tz_name))
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"TZ не резолвиться: {tz_name}: {exc}") from exc
+    fallback = _tz.gettz(tz_name)
+    if fallback is None:
+        raise ValueError(f"TZ не резолвиться: {tz_name}")
+    return cast(tzinfo, fallback)
+
+
+@dataclass(frozen=True)
+class CalendarOverrides:
+    calendar_tag: str
+    tz_name: str
+    weekly_open: str
+    weekly_close: str
+    daily_break_start: str
+    daily_break_minutes: int
+    closed_intervals_utc: List[Tuple[int, int]]
+
+
+def load_calendar_overrides(
+    repo_root: Path,
+    path: str = "config/calendar_overrides.json",
+    tag: str = "",
+) -> CalendarOverrides:
+    overrides_path = repo_root / path
+    if not overrides_path.exists():
+        raise ValueError(f"calendar_overrides.json не знайдено: {overrides_path}")
+    try:
+        data = json.loads(overrides_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"calendar_overrides.json невалідний JSON: {exc}") from exc
+
+    if not tag:
+        raise ValueError("calendar_tag має бути заданий")
+    if not isinstance(data, list):
+        raise ValueError("calendar_overrides.json має містити список профілів")
+    entry: Optional[Dict[str, Any]] = None
+    for item in data:
+        if isinstance(item, dict) and item.get("calendar_tag") == tag:
+            entry = dict(item)
+            break
+
+    if entry is None:
+        raise ValueError(f"calendar_tag не знайдено: {tag}")
+
+    entry_tag = entry.get("calendar_tag")
+    if not isinstance(entry_tag, str) or not entry_tag:
+        raise ValueError("calendar_tag має бути непорожнім рядком")
+    if tag and entry_tag != tag:
+        raise ValueError(f"calendar_tag не збігається: очікував {tag}, отримав {entry_tag}")
+
+    tz_name = entry.get("tz_name") or entry.get("recurrence_tz")
+    if not isinstance(tz_name, str) or not tz_name:
+        raise ValueError("tz_name має бути непорожнім рядком")
+
+    weekly_open = entry.get("weekly_open") or entry.get("weekly_open_local")
+    weekly_close = entry.get("weekly_close") or entry.get("weekly_close_local")
+    if not isinstance(weekly_open, str) or not isinstance(weekly_close, str):
+        raise ValueError("weekly_open/weekly_close мають бути рядками HH:MM")
+
+    daily_break_start = entry.get("daily_break_start")
+    daily_break_minutes = entry.get("daily_break_minutes")
+    if daily_break_start is None:
+        daily_break_local = entry.get("daily_break_local")
+        if isinstance(daily_break_local, dict):
+            daily_break_start = daily_break_local.get("start")
+            daily_break_end = daily_break_local.get("end")
+            if isinstance(daily_break_start, str) and isinstance(daily_break_end, str):
+                daily_break_minutes = _minutes_between(daily_break_start, daily_break_end)
+        elif daily_break_local is not None:
+            raise ValueError("daily_break_local має бути об'єктом")
+    if not isinstance(daily_break_start, str):
+        raise ValueError("daily_break_start має бути рядком HH:MM")
+    if not isinstance(daily_break_minutes, int) or isinstance(daily_break_minutes, bool):
+        raise ValueError("daily_break_minutes має бути int")
+    if daily_break_minutes <= 0:
+        raise ValueError("daily_break_minutes має бути > 0")
+
+    _parse_hhmm(weekly_open)
+    _parse_hhmm(weekly_close)
+    _parse_hhmm(daily_break_start)
+    _resolve_tz_or_raise(tz_name)
+
+    raw_intervals = entry.get("closed_intervals_utc", [])
+    normalized = normalize_closed_intervals_utc(list(raw_intervals) if raw_intervals is not None else [])
+    closed_intervals = [(int(pair[0]), int(pair[1])) for pair in normalized]
+
+    return CalendarOverrides(
+        calendar_tag=entry_tag,
+        tz_name=tz_name,
+        weekly_open=weekly_open,
+        weekly_close=weekly_close,
+        daily_break_start=daily_break_start,
+        daily_break_minutes=int(daily_break_minutes),
+        closed_intervals_utc=closed_intervals,
+    )
 
 
 def _to_utc_iso(ts_ms: int) -> str:
@@ -53,6 +176,8 @@ class TradingCalendar:
     weekly_close_time: str = DEFAULT_WEEKLY_CLOSE
     daily_break_start: str = DEFAULT_DAILY_BREAK_START
     daily_break_minutes: int = DEFAULT_DAILY_BREAK_MINUTES
+    overrides: Optional[CalendarOverrides] = None
+    init_error_seed: Optional[str] = field(default=None, repr=False)
     _tz: tzinfo = field(init=False)
     _init_error: Optional[str] = field(init=False, default=None)
     _tz_backend: str = field(init=False, default="unknown")
@@ -61,15 +186,32 @@ class TradingCalendar:
     _break_start: time = field(init=False)
 
     def __post_init__(self) -> None:
+        self._init_error = self.init_error_seed
+        if self.overrides is not None:
+            self.calendar_tag = self.overrides.calendar_tag
+            self.tz_name = self.overrides.tz_name
+            self.weekly_open_time = self.overrides.weekly_open
+            self.weekly_close_time = self.overrides.weekly_close
+            self.daily_break_start = self.overrides.daily_break_start
+            self.daily_break_minutes = int(self.overrides.daily_break_minutes)
+            merged: List[Tuple[int, int]] = []
+            seen = set()
+            for interval in list(self.overrides.closed_intervals_utc) + list(self.closed_intervals_utc):
+                if interval not in seen:
+                    seen.add(interval)
+                    merged.append(interval)
+            self.closed_intervals_utc = merged
+        if self.daily_break_minutes <= 0:
+            self._init_error = self._init_error or "daily_break_minutes має бути > 0"
         try:
-            self._weekly_open = _parse_hhmm(self.weekly_open_time)
-            self._weekly_close = _parse_hhmm(self.weekly_close_time)
-            self._break_start = _parse_hhmm(self.daily_break_start)
+            self._weekly_open = _time_from_hhmm(self.weekly_open_time)
+            self._weekly_close = _time_from_hhmm(self.weekly_close_time)
+            self._break_start = _time_from_hhmm(self.daily_break_start)
         except Exception as exc:  # noqa: BLE001
             self._weekly_open = time(0, 0)
             self._weekly_close = time(0, 0)
             self._break_start = time(0, 0)
-            self._init_error = f"помилка парсингу часу календаря: {exc}"
+            self._init_error = self._init_error or f"помилка парсингу часу календаря: {exc}"
 
         if self.tz_name.upper() == "UTC" or self.tz_name == "Etc/UTC":
             self._tz = timezone.utc
@@ -137,6 +279,8 @@ class TradingCalendar:
         return reasons
 
     def is_trading_time(self, ts_ms: int) -> bool:
+        if self._init_error:
+            return False
         if self._is_closed_interval(ts_ms):
             return False
         dt_local = self._to_local(ts_ms)

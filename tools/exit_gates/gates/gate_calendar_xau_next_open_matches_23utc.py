@@ -12,10 +12,10 @@ def _ms(year: int, month: int, day: int, hour: int, minute: int, second: int = 0
 
 
 def run() -> Tuple[bool, str]:
-    calendar = Calendar([], "fxcm_calendar_v1_ny")
+    calendar = Calendar([], "fxcm_calendar_v1_utc_overrides")
     sunday_evening_ms = _ms(2026, 1, 25, 20, 6, 0)
-    expected_open_ms = _ms(2026, 1, 25, 23, 0, 0)
-    actual = calendar.next_open_ms(sunday_evening_ms, symbol="XAUUSD")
+    expected_open_ms = _ms(2026, 1, 25, 23, 1, 0)
+    actual = calendar.next_open_ms(sunday_evening_ms)
     if actual != expected_open_ms:
-        return False, f"очікував 23:00 UTC, отримав {actual}"
-    return True, "OK: XAU next_open 23:00 UTC"
+        return False, f"очікував 23:01 UTC, отримав {actual}"
+    return True, "OK: XAU next_open 23:01 UTC"

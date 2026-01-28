@@ -30,7 +30,7 @@
 |   `-- composition.py                 # складання всіх компонентів runtime
 |-- config/                            # SSOT конфіг
 |   |-- config.py                      # основний конфіг та канали (history_provider_kind)
-|   |-- calendar_overrides.json        # SSOT календар (NY recurrence + profiles, XAU 23:00 UTC)
+|   |-- calendar_overrides.json        # SSOT календарні overrides (NY vs v1 UTC overrides)
 |   |-- profile_template.py            # шаблон профілю
 |   `-- secrets_template.py            # шаблон секретів
 |-- core/                              # доменна SSOT логіка
@@ -49,7 +49,8 @@
 |   |-- runtime/                       # SSOT режим backend
 |   |   `-- mode.py                     # режими FOREXCONNECT/REPLAY/DISABLED
 |   |-- time/                          # SSOT час/календар
-|   |   |-- calendar.py                 # календар (NY recurrence + UTC overrides)
+|   |   |-- calendar.py                 # календар (loader overrides + rails)
+|   |   |-- closed_intervals.py         # rails/нормалізація closed_intervals_utc
 |   |   |-- sessions.py                 # обчислення сесій
 |   |   |-- buckets.py                  # TF buckets
 |   |   `-- timestamps.py               # timestamp rails
@@ -65,6 +66,7 @@
 |   |-- Public API Spec (SSOT).md      # SSOT API
 |   |-- Public Surface.md              # поверхня доступу
 |   |-- audit_v6_public_surface.md     # аудит поверхні
+|   |-- evidence/                      # архів доказів/вхідних даних
 |   `-- ...                            # решта аудитів/специфікацій
 |-- fxcm/                              # FXCM історичні провайдери/стаби
 |   `-- history_fxcm_provider.py       # скелет провайдера FXCM історії
@@ -106,6 +108,8 @@
 |   `-- test_*.py                      # тести на rails/контракти
 |-- tools/                             # операційні скрипти
 |   |-- run_exit_gates.py              # SSOT runner для exit gates
+|   |-- run_dev_checks.py              # runner для dev-checks (ruff/mypy/pytest)
+|   |-- migrate_v1_calendar_overrides.py # one-off міграція v1 календарних даних
 |   |-- validate_tick_fixtures.py      # валідація tick fixtures
 |   |-- capture_fxcm_ticks.py          # capture ticks (ops)
 |   |-- record_ticks.py                # запис ticks (ops)
@@ -115,6 +119,8 @@
 |       `-- gates/                     # окремі gate'и
 |           |-- gate_tick_event_time_not_wallclock.py # rail: tick_ts_ms не з wall-clock
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
+|           |-- gate_calendar_schedule_drift.py # rail: schedule drift (daily break + weekly boundary)
+|           |-- gate_calendar_closed_intervals.py # rail: валідація closed_intervals_utc
 |-- ui_lite/                           # канонічна UI. “oscilloscope” для конектора
 |   |-- server.py                      # UI Lite HTTP + /debug + inbound OHLCV/status validation + health WS (N/A/STALE)
 |   `-- static/                        # UI Lite static assets

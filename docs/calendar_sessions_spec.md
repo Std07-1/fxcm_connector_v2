@@ -7,6 +7,7 @@
   - Weekly close: пʼятниця 17:00 NY.
   - Daily break: 17:00–17:05 NY (пн‑чт).
 - `closed_intervals_utc` — allowlist жорстких закриттів у форматі [start_ms, end_ms) (UTC), перекривають будь‑які сесії.
+- TODO: додати святкові `closed_intervals_utc` для `fxcm_calendar_v1_utc_overrides` (SSOT дані).
 
 ## Інваріанти
 - `is_trading_time(ts_ms)` → True лише якщо:
