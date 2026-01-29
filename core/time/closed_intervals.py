@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Sequence, Tuple
 
 from core.time.timestamps import MAX_EPOCH_MS, MIN_EPOCH_MS
 
 
-def normalize_closed_intervals_utc(intervals: List[List[int]]) -> List[List[int]]:
+def normalize_closed_intervals_utc(intervals: List[Sequence[int]]) -> List[Tuple[int, int]]:
     if not isinstance(intervals, list):
         raise ValueError("closed_intervals_utc має бути списком")
-    normalized: List[List[int]] = []
+    normalized: List[Tuple[int, int]] = []
     for idx, interval in enumerate(intervals):
-        if not isinstance(interval, list):
-            raise ValueError(f"closed_intervals_utc[{idx}] має бути списком")
+        if not isinstance(interval, (list, tuple)):
+            raise ValueError(f"closed_intervals_utc[{idx}] має бути списком або кортежем")
         if len(interval) != 2:
             raise ValueError(f"closed_intervals_utc[{idx}] має містити 2 значення")
         start_ms, end_ms = interval[0], interval[1]
@@ -25,7 +25,7 @@ def normalize_closed_intervals_utc(intervals: List[List[int]]) -> List[List[int]
             raise ValueError(f"closed_intervals_utc[{idx}][1] поза межами epoch rails: {end_ms}")
         if start_ms >= end_ms:
             raise ValueError(f"closed_intervals_utc[{idx}] має start_ms < end_ms, отримано {start_ms} >= {end_ms}")
-        normalized.append([int(start_ms), int(end_ms)])
+        normalized.append((int(start_ms), int(end_ms)))
 
     normalized.sort(key=lambda pair: pair[0])
     for idx in range(1, len(normalized)):

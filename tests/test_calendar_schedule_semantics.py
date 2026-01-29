@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from core.time.calendar import Calendar
 from core.time.sessions import TradingCalendar, load_calendar_overrides
 from core.time.timestamps import to_epoch_ms_utc
 
@@ -47,3 +48,28 @@ def test_calendar_schedule_semantics(
     assert calendar.is_trading_time(break_during_ms) is False
     assert calendar.is_trading_time(after_close_ms) is False
     assert calendar.is_trading_time(after_open_ms) is True
+
+
+def test_calendar_semantics_with_tmp_overrides(tmp_path: Path) -> None:
+    overrides_path = tmp_path / "calendar_overrides.json"
+    overrides_path.write_text(
+        """
+[
+    {
+        "calendar_tag": "test_calendar",
+        "tz_name": "UTC",
+        "weekly_open": "23:00",
+        "weekly_close": "22:00",
+        "daily_break_start": "21:00",
+        "daily_break_minutes": 60,
+        "closed_intervals_utc": []
+    }
+]
+""".strip(),
+        encoding="utf-8",
+    )
+    calendar = Calendar([], "test_calendar", overrides_path=str(overrides_path))
+    assert calendar.is_open(_ms(2026, 1, 7, 20, 59, 0)) is True
+    assert calendar.is_open(_ms(2026, 1, 7, 21, 30, 0)) is False
+    assert calendar.is_open(_ms(2026, 1, 9, 22, 1, 0)) is False
+    assert calendar.is_open(_ms(2026, 1, 11, 23, 1, 0)) is True

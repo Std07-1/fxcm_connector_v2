@@ -30,7 +30,7 @@
 |   `-- composition.py                 # складання всіх компонентів runtime
 |-- config/                            # SSOT конфіг
 |   |-- config.py                      # основний конфіг та канали (history_provider_kind)
-|   |-- calendar_overrides.json        # SSOT календарні overrides (NY vs v1 UTC overrides)
+|   |-- calendar_overrides.json        # SSOT календарні overrides (weekly schedule + closed_intervals_utc)
 |   |-- profile_template.py            # шаблон профілю
 |   `-- secrets_template.py            # шаблон секретів
 |-- core/                              # доменна SSOT логіка
@@ -80,7 +80,7 @@
 |   |-- http_server.py                 # HTTP API (/api/*, /chart stub)
 |   |-- status.py                      # status snapshot + tick event/snap/skew + coverage telemetry + market.tz_backend
 |   |-- command_bus.py                 # обробка команд
-|   |-- tick_feed.py                   # публікація tick
+|   |-- tick_feed.py                   # tick feed: FxcmForexConnectStream → TickPublisher → Redis
 |   |-- replay_ticks.py                # replay ingest (REAL‑only)
 |   |-- fxcm_forexconnect.py           # FXCM інтеграція (tick_ts=event_ts, snap_ts=receipt_ts)
 |   |-- handlers_p3.py                 # командні handler'и P3
@@ -98,6 +98,8 @@
 |   |-- ohlcv_sim*.py                  # runtime sim заборонено (rail)
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
+|       |-- tick_liveness.py           # liveness + debounce для stale_no_ticks
+|       `-- ...
 |-- store/                             # FileCache SSOT (CSV + meta)
 |   `-- file_cache/                    # FileCache (CSV + meta.json)
 |       |-- cache_utils.py             # SSOT rails/columns/merge+trim
@@ -114,12 +116,14 @@
 |   |-- record_ticks.py                # запис ticks (ops)
 |   |-- replay_ticks.py                # thin wrapper → runtime.replay_ticks
 |   `-- exit_gates/                    # manifests + gate modules
-|       |-- manifest.json              # дефолтний manifest (містить календарні гейти)
+|       |-- manifest.json              # дефолтний manifest (містить calendar_closed_intervals + calendar_schedule_drift)
 |       |-- manifest_p1_calendar.json  # календарні гейти (точковий запуск)
 |       |-- manifest*.json             # інші набори gate'ів
 |       `-- gates/                     # окремі gate'и
 |           |-- gate_tick_event_time_not_wallclock.py # rail: tick_ts_ms не з wall-clock
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
+|           |-- gate_fxcm_tick_mode_config.py # rail: tick_mode=fxcm → fxcm_backend=forexconnect
+|           |-- gate_fxcm_tick_liveness.py # rail: liveness debounce (cooldown)
 |           |-- gate_calendar_schedule_drift.py # rail: schedule drift (daily break + weekly boundary)
 |           |-- gate_calendar_closed_intervals.py # rail: валідація closed_intervals_utc
 |           |-- gate_file_cache_schema.py # rail: file cache schema/semantics

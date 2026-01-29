@@ -34,6 +34,29 @@ class TickPublisher:
         tick_ts_ms: int,
         snap_ts_ms: int,
     ) -> None:
+        snapshot = self.status.snapshot()
+        price = snapshot.get("price") if isinstance(snapshot, dict) else None
+        last_tick_ts_ms = 0
+        if isinstance(price, dict):
+            last_tick_ts_ms = int(price.get("last_tick_ts_ms", 0))
+        if isinstance(tick_ts_ms, int) and not isinstance(tick_ts_ms, bool):
+            if last_tick_ts_ms > 0 and int(tick_ts_ms) < int(last_tick_ts_ms):
+                self.status.append_error(
+                    code="tick_out_of_order",
+                    severity="error",
+                    message="tick_ts_ms менший за попередній tick",
+                    context={
+                        "symbol": symbol,
+                        "tick_ts_ms": int(tick_ts_ms),
+                        "last_tick_ts_ms": int(last_tick_ts_ms),
+                        "snap_ts_ms": int(snap_ts_ms),
+                    },
+                )
+                self.status.mark_degraded("tick_out_of_order")
+                self.status.record_tick_contract_reject()
+                self.status.record_fxcm_contract_reject()
+                self.status.record_fxcm_tick_drop("out_of_order")
+                return
         payload = {
             "symbol": symbol,
             "bid": bid,
@@ -59,5 +82,8 @@ class TickPublisher:
                 message=str(exc),
                 context={"symbol": symbol},
             )
-            self.status.record_tick_error()
-            raise
+            self.status.mark_degraded("tick_contract_error")
+            self.status.record_tick_contract_reject()
+            self.status.record_fxcm_contract_reject()
+            self.status.record_fxcm_tick_drop("contract_error")
+            return

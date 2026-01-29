@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 from core.time.closed_intervals import normalize_closed_intervals_utc
 
@@ -40,7 +40,7 @@ def main() -> int:
     v1_path = _find_v1_path(repo_root)
     v1_data = json.loads(v1_path.read_text(encoding="utf-8"))
 
-    intervals: List[List[int]] = []
+    intervals: List[Sequence[int]] = []
     raw_intervals = v1_data.get("closed_intervals_utc", [])
     if not isinstance(raw_intervals, list):
         raise ValueError("v1 closed_intervals_utc має бути списком")

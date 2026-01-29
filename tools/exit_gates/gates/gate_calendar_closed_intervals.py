@@ -15,6 +15,7 @@ import json
 from typing import Tuple
 
 from core.time.closed_intervals import normalize_closed_intervals_utc
+from core.time.sessions import _parse_hhmm, _resolve_tz_or_raise
 
 
 def _require_keys(entry: dict, keys: Tuple[str, ...]) -> Tuple[bool, str]:
@@ -36,18 +37,35 @@ def run() -> Tuple[bool, str]:
         tag = entry.get("calendar_tag")
         if not isinstance(tag, str) or not tag:
             return False, f"calendar_overrides[{idx}].calendar_tag має бути непорожнім рядком"
+        ok, msg = _require_keys(
+            entry,
+            ("weekly_open", "weekly_close", "daily_break_start", "daily_break_minutes", "tz_name"),
+        )
+        if not ok:
+            return False, msg
+        if not isinstance(entry.get("tz_name"), str):
+            return False, f"calendar_tag={tag}: tz_name має бути рядком"
+        if not isinstance(entry.get("weekly_open"), str) or not isinstance(entry.get("weekly_close"), str):
+            return False, f"calendar_tag={tag}: weekly_open/weekly_close мають бути рядками HH:MM"
+        if not isinstance(entry.get("daily_break_start"), str):
+            return False, f"calendar_tag={tag}: daily_break_start має бути рядком HH:MM"
+        daily_break_minutes = entry.get("daily_break_minutes")
+        if not isinstance(daily_break_minutes, int) or isinstance(daily_break_minutes, bool):
+            return False, f"calendar_tag={tag}: daily_break_minutes має бути int"
+        if int(daily_break_minutes) <= 0:
+            return False, f"calendar_tag={tag}: daily_break_minutes має бути > 0"
+        try:
+            _parse_hhmm(str(entry.get("weekly_open")))
+            _parse_hhmm(str(entry.get("weekly_close")))
+            _parse_hhmm(str(entry.get("daily_break_start")))
+            _resolve_tz_or_raise(str(entry.get("tz_name")))
+        except Exception as exc:  # noqa: BLE001
+            return False, f"calendar_tag={tag}: {exc}"
+
         raw_intervals = entry.get("closed_intervals_utc", [])
         try:
             normalize_closed_intervals_utc(list(raw_intervals) if raw_intervals is not None else [])
         except Exception as exc:  # noqa: BLE001
             return False, f"calendar_tag={tag}: {exc}"
 
-        if tag == "fxcm_calendar_v1_utc_overrides":
-            ok, msg = _require_keys(
-                entry,
-                ("weekly_open", "weekly_close", "daily_break_start", "daily_break_minutes", "tz_name"),
-            )
-            if not ok:
-                return False, msg
-
-    return True, "OK: closed_intervals_utc валідні"
+    return True, "OK: calendar_overrides валідні (closed_intervals_utc + schedule keys)"

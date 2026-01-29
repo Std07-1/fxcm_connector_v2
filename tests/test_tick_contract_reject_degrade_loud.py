@@ -5,10 +5,10 @@ from pathlib import Path
 from config.config import Config
 from core.time.calendar import Calendar
 from core.validation.validator import SchemaValidator
+from observability.metrics import create_metrics
 from runtime.publisher import RedisPublisher
 from runtime.status import StatusManager
 from runtime.tick_feed import TickPublisher
-from tests.fixtures.sim.tick_simulator import TickSimulator
 
 
 class _DummyRedis:
@@ -19,7 +19,7 @@ class _DummyRedis:
         return None
 
 
-def test_tick_mode_fxcm_no_simulator_error() -> None:
+def test_tick_contract_reject_degrade_loud() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
     config = Config(tick_mode="fxcm")
@@ -28,12 +28,13 @@ def test_tick_mode_fxcm_no_simulator_error() -> None:
         calendar_tag=config.calendar_tag,
     )
     publisher = RedisPublisher(_DummyRedis(), config)
+    metrics = create_metrics()
     status = StatusManager(
         config=config,
         validator=validator,
         publisher=publisher,
         calendar=calendar,
-        metrics=None,
+        metrics=metrics,
     )
     status.build_initial_snapshot()
 
@@ -42,12 +43,25 @@ def test_tick_mode_fxcm_no_simulator_error() -> None:
         publisher=publisher,
         validator=validator,
         status=status,
+        metrics=metrics,
     )
-    sim = TickSimulator(config=config, publisher=tick_publisher, status=status)
-    sim.start()
+
+    tick_publisher.publish_tick(
+        symbol="XAUUSD",
+        bid=1.0,
+        ask=1.2,
+        mid=1.1,
+        tick_ts_ms="bad",  # type: ignore[arg-type]
+        snap_ts_ms=0,
+    )
 
     snapshot = status.snapshot()
-    degraded = snapshot.get("degraded", [])
     errors = snapshot.get("errors", [])
-    assert "tick_fxcm_not_implemented" not in degraded
-    assert not any(err.get("code") == "tick_mode_not_supported" for err in errors)
+    degraded = snapshot.get("degraded", [])
+    price = snapshot.get("price", {})
+    fxcm = snapshot.get("fxcm", {})
+
+    assert any(err.get("code") == "tick_contract_error" for err in errors)
+    assert "tick_contract_error" in degraded
+    assert int(price.get("tick_err_total", 0)) == 1
+    assert int(fxcm.get("contract_reject_total", 0)) == 1

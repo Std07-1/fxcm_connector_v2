@@ -10,7 +10,9 @@ import redis
 
 from config.config import Config
 from core.runtime.mode import BackendMode
+from core.time.buckets import TF_TO_MS, get_bucket_open_ms
 from core.time.calendar import Calendar
+from core.time.sessions import _to_utc_iso
 from core.validation.validator import ContractError, SchemaValidator
 from observability.metrics import Metrics, create_metrics, start_metrics_server
 from runtime.command_bus import CommandBus
@@ -60,8 +62,13 @@ def _resolve_mode(config: Config) -> BackendMode:
 
 
 def _ensure_no_sim(config: Config) -> None:
-    if config.tick_mode != "off" or config.preview_mode != "off" or config.ohlcv_sim_enabled:
+    if config.tick_mode not in {"off", "fxcm"} or config.preview_mode != "off" or config.ohlcv_sim_enabled:
         raise SystemExit("Runtime sim-режими видалені: вимкніть tick/preview/ohlcv sim")
+
+
+def _ensure_tick_mode(config: Config) -> None:
+    if config.tick_mode == "fxcm" and config.fxcm_backend != "forexconnect":
+        raise SystemExit("tick_mode=fxcm потребує fxcm_backend=forexconnect")
 
 
 def build_history_provider_for_runtime(
@@ -87,6 +94,7 @@ def build_history_provider_for_runtime(
 def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     mode = _resolve_mode(config)
     _ensure_no_sim(config)
+    _ensure_tick_mode(config)
 
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
@@ -428,6 +436,14 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     )
 
     last_ohlcv_log_by_tf: dict = {}
+    last_ohlcv_summary_log_ms = 0
+    last_ohlcv_summary_info_ms = 0
+    first_ok_summary_logged = False
+    ohlcv_publish_counts_by_tf: dict = {}
+    ohlcv_last_open_by_tf: dict = {}
+    ohlcv_last_complete_by_tf: dict = {}
+    ohlcv_prev_open_by_tf: dict = {}
+    last_preview_rails = (0, 0, 0)
     last_archived_open_by_tf: dict = {}
 
     def _handle_fxcm_tick(
@@ -438,17 +454,19 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
         tick_ts_ms: int,
         snap_ts_ms: int,
     ) -> None:
-        try:
-            tick_publisher.publish_tick(
-                symbol=symbol,
-                bid=bid,
-                ask=ask,
-                mid=mid,
-                tick_ts_ms=tick_ts_ms,
-                snap_ts_ms=snap_ts_ms,
-            )
-        except ContractError:
-            return
+        nonlocal last_ohlcv_summary_log_ms, last_ohlcv_summary_info_ms, last_preview_rails, first_ok_summary_logged
+        if config.tick_mode == "fxcm":
+            try:
+                tick_publisher.publish_tick(
+                    symbol=symbol,
+                    bid=bid,
+                    ask=ask,
+                    mid=mid,
+                    tick_ts_ms=tick_ts_ms,
+                    snap_ts_ms=snap_ts_ms,
+                )
+            except ContractError:
+                return
         if status.is_preview_paused():
             status.publish_snapshot()
             return
@@ -528,15 +546,123 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                         bar_open_time_ms=last_open,
                         publish_ts_ms=now_ms,
                     )
-                    last_log = int(last_ohlcv_log_by_tf.get(tf_name, 0))
-                    if now_ms - last_log >= 10_000:
-                        log.info(
-                            "Опубліковано ohlcv tf=%s open_time_ms=%s complete=%s",
-                            tf_name,
-                            last_open,
-                            str(payload.get("complete", False)).lower(),
-                        )
-                        last_ohlcv_log_by_tf[tf_name] = now_ms
+                    ohlcv_publish_counts_by_tf[tf_name] = int(ohlcv_publish_counts_by_tf.get(tf_name, 0)) + 1
+                    prev_open = int(ohlcv_last_open_by_tf.get(tf_name, 0))
+                    if prev_open and prev_open != last_open:
+                        ohlcv_prev_open_by_tf[tf_name] = prev_open
+                    ohlcv_last_open_by_tf[tf_name] = int(last_open)
+                    ohlcv_last_complete_by_tf[tf_name] = bool(payload.get("complete", False))
+
+                    if ohlcv_last_complete_by_tf[tf_name]:
+                        last_log = int(last_ohlcv_log_by_tf.get(tf_name, 0))
+                        if now_ms - last_log >= 10_000:
+                            log.info(
+                                "Опубліковано final ohlcv tf=%s open_time_ms=%s",
+                                tf_name,
+                                last_open,
+                            )
+                            last_ohlcv_log_by_tf[tf_name] = now_ms
+
+                    if now_ms - last_ohlcv_summary_log_ms >= 60_000:
+                        preview_snapshot = status.snapshot().get("ohlcv_preview")
+                        preview_state = preview_snapshot if isinstance(preview_snapshot, dict) else {}
+                        snapshot = status.snapshot()
+                        price_raw = snapshot.get("price")
+                        fxcm_raw = snapshot.get("fxcm")
+                        price = price_raw if isinstance(price_raw, dict) else {}
+                        fxcm = fxcm_raw if isinstance(fxcm_raw, dict) else {}
+                        last_publish_ts_ms = int(preview_state.get("last_publish_ts_ms", 0))
+                        ohlcv_age_s = (now_ms - last_publish_ts_ms) / 1000.0 if last_publish_ts_ms > 0 else None
+                        late_drop = int(preview_state.get("late_ticks_dropped_total", 0))
+                        misalign = int(preview_state.get("misaligned_open_time_total", 0))
+                        past_mut = int(preview_state.get("past_mutations_total", 0))
+                        rails_changed = (late_drop, misalign, past_mut) != last_preview_rails
+                        fxcm_state = str(fxcm.get("state", ""))
+                        tick_lag_ms = int(price.get("tick_lag_ms", 0))
+                        tick_lag_s = tick_lag_ms / 1000.0 if tick_lag_ms > 0 else 0.0
+                        stale_tf = ""
+                        stale_delay_bars = 0
+                        parts = []
+                        top_delay_parts = []
+                        for tf_key, count in sorted(ohlcv_publish_counts_by_tf.items()):
+                            tf_ms = TF_TO_MS.get(str(tf_key))
+                            if tf_ms is None:
+                                continue
+                            last_open_ms = int(ohlcv_last_open_by_tf.get(tf_key, 0))
+                            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, config.trading_day_boundary_utc)
+                            delay_bars = max(0, int((expected_ms - last_open_ms) // tf_ms))
+                            if delay_bars >= stale_delay_bars:
+                                stale_delay_bars = delay_bars
+                                stale_tf = str(tf_key)
+                            if delay_bars > 0:
+                                top_delay_parts.append(f"{tf_key}:delay={delay_bars}")
+                            prev_open_ms = int(ohlcv_prev_open_by_tf.get(tf_key, 0))
+                            step_ms = (last_open_ms - prev_open_ms) if prev_open_ms > 0 else 0
+                            parts.append(
+                                "{tf} last={last} expected={expected} delay={delay} step={step}s".format(
+                                    tf=tf_key,
+                                    last=_to_utc_iso(last_open_ms) if last_open_ms > 0 else "-",
+                                    expected=_to_utc_iso(int(expected_ms)) if int(expected_ms) > 0 else "-",
+                                    delay=delay_bars,
+                                    step=int(step_ms / 1000) if step_ms > 0 else 0,
+                                )
+                            )
+                        needs_summary = rails_changed or (ohlcv_age_s is not None and ohlcv_age_s > 15.0)
+                        if stale_delay_bars > 0:
+                            needs_summary = True
+                        if parts and needs_summary:
+                            tail = max(ohlcv_publish_counts_by_tf.values() or [0])
+                            log.warning(
+                                "OHLCV preview: %s tail=%s ohlcv_age=%.1fs fxcm=%s tick=%.1fs",
+                                symbol,
+                                tail,
+                                float(ohlcv_age_s or 0.0),
+                                fxcm_state,
+                                tick_lag_s,
+                            )
+                            if stale_tf:
+                                log.warning(
+                                    "ohlcv_preview WARN stale_tf=%s delay_bars=%s expected=%s last=%s",
+                                    stale_tf,
+                                    stale_delay_bars,
+                                    _to_utc_iso(
+                                        int(
+                                            get_bucket_open_ms(
+                                                str(stale_tf),
+                                                now_ms,
+                                                config.trading_day_boundary_utc,
+                                            )
+                                        )
+                                    ),
+                                    _to_utc_iso(int(ohlcv_last_open_by_tf.get(stale_tf, 0))),
+                                )
+                            if top_delay_parts:
+                                log.warning("top_tf: %s", ", ".join(top_delay_parts[:4]))
+                            log.warning(
+                                "ohlcv_preview rails: late_drop=%s misalign=%s past_mut=%s",
+                                late_drop,
+                                misalign,
+                                past_mut,
+                            )
+                        if (
+                            parts
+                            and not needs_summary
+                            and ((not first_ok_summary_logged) or now_ms - last_ohlcv_summary_info_ms >= 300_000)
+                        ):
+                            tail = max(ohlcv_publish_counts_by_tf.values() or [0])
+                            log.info(
+                                "OHLCV preview OK: %s tail=%s ohlcv_age=%.1fs fxcm=%s tick=%.1fs",
+                                symbol,
+                                tail,
+                                float(ohlcv_age_s or 0.0),
+                                fxcm_state,
+                                tick_lag_s,
+                            )
+                            last_ohlcv_summary_info_ms = now_ms
+                            first_ok_summary_logged = True
+                        last_ohlcv_summary_log_ms = now_ms
+                        last_preview_rails = (late_drop, misalign, past_mut)
+                        ohlcv_publish_counts_by_tf.clear()
                 except ContractError as exc:
                     status.append_error(
                         code="ohlcv_preview_contract_error",
@@ -550,12 +676,12 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
 
     fxcm_handle = None
     replay_handle = None
-    if mode == BackendMode.FOREXCONNECT:
+    if mode == BackendMode.FOREXCONNECT and config.tick_mode == "fxcm":
         fxcm_stream = FxcmForexConnectStream(config=config, status=status, on_tick=_handle_fxcm_tick)
         fxcm_handle = fxcm_stream.start()
-        if fxcm_preview and fxcm_handle is None:
+        if fxcm_handle is None:
             status.publish_snapshot()
-            raise SystemExit("FXCM preview: stream не запущено")
+            raise SystemExit("FXCM tick stream не запущено")
     if mode == BackendMode.REPLAY:
         replay_stream = ReplayTickStream(
             config=config,

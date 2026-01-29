@@ -54,9 +54,9 @@ def _ms_local(year: int, month: int, day: int, hour: int, minute: int, tz: tzinf
 
 def run() -> Tuple[bool, str]:
     config = load_config()
-    calendar = Calendar(config.closed_intervals_utc, config.calendar_tag)
-    if calendar.tc.init_error:
-        return False, f"FAIL: calendar init_error: {calendar.tc.init_error}"
+    calendar = Calendar([], config.calendar_tag)
+    if calendar.health_error():
+        return False, f"FAIL: calendar init_error: {calendar.health_error()}"
     try:
         overrides = load_calendar_overrides(
             repo_root=Path(__file__).resolve().parents[3],

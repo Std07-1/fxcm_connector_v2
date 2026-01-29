@@ -6,6 +6,8 @@
   {"id": "gate_tick_units", "module": "tools.exit_gates.gates.gate_tick_units", "fn": "run"},
   {"id": "gate_tick_event_time_not_wallclock", "module": "tools.exit_gates.gates.gate_tick_event_time_not_wallclock", "fn": "run"},
   {"id": "gate_tick_skew_non_negative", "module": "tools.exit_gates.gates.gate_tick_skew_non_negative", "fn": "run"},
+  {"id": "gate_fxcm_tick_mode_config", "module": "tools.exit_gates.gates.gate_fxcm_tick_mode_config", "fn": "run"},
+  {"id": "gate_fxcm_tick_liveness", "module": "tools.exit_gates.gates.gate_fxcm_tick_liveness", "fn": "run"},
   {"id": "gate_preview_1m_boundaries", "module": "tools.exit_gates.gates.gate_preview_1m_boundaries", "fn": "run"},
   {"id": "gate_preview_bucket_boundaries", "module": "tools.exit_gates.gates.gate_preview_bucket_boundaries", "fn": "run"},
   {"id": "gate_preview_1m_geom", "module": "tools.exit_gates.gates.gate_preview_1m_geom", "fn": "run"},

@@ -175,6 +175,26 @@ class StatusManager:
         self._snapshot["tail_guard"] = tail
         return tail
 
+    def _has_error_code(self, code: str) -> bool:
+        errors = self._snapshot.get("errors")
+        if not isinstance(errors, list):
+            return False
+        for err in errors:
+            if isinstance(err, dict) and err.get("code") == code:
+                return True
+        return False
+
+    def _ensure_calendar_health(self, ts_ms: int) -> None:
+        calendar_error = self.calendar.health_error()
+        if calendar_error:
+            self.mark_degraded("calendar_error")
+            if not self._has_error_code("calendar_error"):
+                self.append_error(
+                    code="calendar_error",
+                    severity="error",
+                    message=calendar_error,
+                )
+
     def _sync_tail_guard_from_block(self, tail: Dict[str, Any], block: Dict[str, Any]) -> None:
         tail["last_audit_ts_ms"] = int(block.get("last_audit_ts_ms", 0))
         tail["window_hours"] = int(block.get("window_hours", 0))
@@ -411,6 +431,7 @@ class StatusManager:
         self._snapshot["process"]["uptime_s"] = uptime_s
         self._snapshot["process"]["state"] = "running"
         self._snapshot["market"] = self.calendar.market_state(ts_ms, symbol=self._default_market_symbol())
+        self._ensure_calendar_health(ts_ms)
         if self.metrics is not None:
             self.metrics.uptime_seconds.set(uptime_s)
 
@@ -681,6 +702,10 @@ class StatusManager:
         self._snapshot["fxcm"] = fxcm
         if self.metrics is not None:
             self.metrics.fxcm_contract_reject_total.inc()
+
+    def record_fxcm_tick_drop(self, reason: str) -> None:
+        if self.metrics is not None:
+            self.metrics.fxcm_ticks_dropped_total.labels(reason=str(reason)).inc()
 
     def record_ohlcv_publish(self, tf: str, bar_open_time_ms: int, publish_ts_ms: int) -> None:
         preview = self._snapshot.get("ohlcv_preview")

@@ -201,6 +201,11 @@ class TradingCalendar:
                     seen.add(interval)
                     merged.append(interval)
             self.closed_intervals_utc = merged
+        try:
+            self.closed_intervals_utc = list(normalize_closed_intervals_utc(list(self.closed_intervals_utc)))
+        except Exception as exc:  # noqa: BLE001
+            self.closed_intervals_utc = []
+            self._init_error = self._init_error or f"closed_intervals_utc невалідні: {exc}"
         if self.daily_break_minutes <= 0:
             self._init_error = self._init_error or "daily_break_minutes має бути > 0"
         try:
@@ -301,6 +306,8 @@ class TradingCalendar:
         return True
 
     def next_trading_open_ms(self, ts_ms: int) -> int:
+        if self._init_error:
+            return ts_ms
         if self._is_closed_interval(ts_ms):
             end_ms = self._closed_interval_end(ts_ms)
             if end_ms is not None:
@@ -325,6 +332,8 @@ class TradingCalendar:
         return ts_ms
 
     def next_trading_pause_ms(self, ts_ms: int) -> int:
+        if self._init_error:
+            return ts_ms
         dt_local = self._to_local(ts_ms)
         intervals = self._open_intervals_for_date(dt_local.date())
         for start, end in intervals:

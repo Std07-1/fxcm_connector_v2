@@ -39,6 +39,8 @@ class Config:
     fxcm_stale_s: int = 30
     fxcm_resubscribe_retries: int = 1
     fxcm_reconnect_backoff_s: float = 2.0
+    fxcm_reconnect_backoff_cap_s: float = 60.0
+    fxcm_reconnect_cooldown_s: int = 20
 
     history_provider_kind: str = "fxcm_forexconnect"  # fxcm_forexconnect | none
 

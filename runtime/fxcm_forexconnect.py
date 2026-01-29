@@ -11,12 +11,14 @@ from typing_extensions import Protocol
 
 from config.config import Config
 from core.market.tick import Tick, normalize_tick
+from core.time.sessions import _to_utc_iso
 from core.time.timestamps import to_epoch_ms_utc
 from core.validation.validator import ContractError
 from observability.metrics import Metrics
 from runtime.fxcm.adapter import FxcmAdapter
 from runtime.fxcm.fsm import FxcmFsmDecision, FxcmSessionFsm
 from runtime.fxcm.session_manager import FxcmSessionManager
+from runtime.fxcm.tick_liveness import FxcmTickLiveness
 from runtime.status import StatusManager
 
 log = logging.getLogger("fxcm_forexconnect")
@@ -227,7 +229,7 @@ def _offer_row_to_tick(
         if metrics is not None:
             metrics.fxcm_ticks_dropped_total.labels(reason="missing_event_ts").inc()
         return None
-    snap_ts_ms = int(max(receipt_ms, event_ts_ms))
+    snap_ts_ms = int(receipt_ms)
     return normalize_tick(
         symbol=symbol,
         bid=float(bid),
@@ -420,11 +422,17 @@ class FxcmForexConnectStream:
         reconnect_attempt = 0
         last_ok_ts_ms = 0
         first_tick_logged = False
+        last_tick_log_ms = 0
         fx = None
         fsm = FxcmSessionFsm(
             stale_s=int(self.config.fxcm_stale_s),
             resubscribe_retries=int(self.config.fxcm_resubscribe_retries),
             reconnect_backoff_s=float(self.config.fxcm_reconnect_backoff_s),
+            reconnect_backoff_cap_s=float(self.config.fxcm_reconnect_backoff_cap_s),
+        )
+        liveness = FxcmTickLiveness(
+            stale_s=int(self.config.fxcm_stale_s),
+            cooldown_s=int(self.config.fxcm_reconnect_cooldown_s),
         )
         normalized_symbols = [normalize_symbol(s) for s in self.config.fxcm_symbols]
         denormalized_symbols = [denormalize_symbol(s) for s in self.config.fxcm_symbols]
@@ -446,9 +454,10 @@ class FxcmForexConnectStream:
         while not self._stop_event.is_set():
             now_ms = int(time.time() * 1000)
             if not self.status.calendar.is_open(now_ms):
+                self.status.clear_degraded("fxcm_stale_no_ticks")
                 next_open_ms = _next_open_ms(now_ms, self.config.closed_intervals_utc)
                 reconnect_attempt += 1
-                backoff_s = _backoff_seconds(reconnect_attempt, cap=60.0)
+                backoff_s = _backoff_seconds(reconnect_attempt, cap=float(self.config.fxcm_reconnect_backoff_cap_s))
                 retry_ms = max(next_open_ms, int(now_ms + backoff_s * 1000))
                 self.status.update_fxcm_state(
                     state="paused_market_closed",
@@ -532,7 +541,7 @@ class FxcmForexConnectStream:
                 session: Optional[FxcmSessionManager] = None
 
                 def _on_offer_tick(tick: Tick) -> None:
-                    nonlocal last_tick_ts_ms, first_tick_logged
+                    nonlocal last_tick_ts_ms, first_tick_logged, last_tick_log_ms
                     last_tick_ts_ms = tick.tick_ts_ms
                     self.on_tick(
                         tick.symbol,
@@ -544,9 +553,15 @@ class FxcmForexConnectStream:
                     )
                     if session is not None:
                         session.on_tick(tick.tick_ts_ms)
-                    if not first_tick_logged:
+                    now_ms = int(time.time() * 1000)
+                    if not first_tick_logged or now_ms - last_tick_log_ms >= 60_000:
                         first_tick_logged = True
-                        log.info("FXCM tick OK: %s ts_ms=%s", tick.symbol, tick.tick_ts_ms)
+                        last_tick_log_ms = now_ms
+                        log.debug(
+                            "FXCM tick OK: %s ts=%s",
+                            tick.symbol,
+                            _to_utc_iso(int(tick.tick_ts_ms)),
+                        )
 
                 subscription = FXCMOfferSubscription(
                     fx=fx,
@@ -559,6 +574,7 @@ class FxcmForexConnectStream:
                     fsm=fsm,
                     status=self.status,
                     adapter=adapter,
+                    liveness=liveness,
                     metrics=self.status.metrics,
                 )
                 if not subscription.attach():
@@ -607,6 +623,7 @@ class FxcmForexConnectStream:
                         if session is not None:
                             session.on_resubscribe_result(True)
                     elif decision.action == "reconnect":
+                        next_retry_ts_ms = int(now_ms + float(decision.backoff_s) * 1000)
                         self.status.update_fxcm_state(
                             state="reconnecting",
                             last_tick_ts_ms=last_tick_ts_ms,
@@ -614,7 +631,7 @@ class FxcmForexConnectStream:
                             last_err_ts_ms=int(time.time() * 1000),
                             last_ok_ts_ms=last_ok_ts_ms,
                             reconnect_attempt=reconnect_attempt,
-                            next_retry_ts_ms=0,
+                            next_retry_ts_ms=next_retry_ts_ms,
                             fsm_state=fsm.state.value,
                             stale_seconds=fsm.stale_seconds,
                             last_action=fsm.last_action,
@@ -651,7 +668,7 @@ class FxcmForexConnectStream:
                 time.sleep(sleep_s)
             except Exception as exc:  # noqa: BLE001
                 reconnect_attempt += 1
-                sleep_s = _backoff_seconds(reconnect_attempt, cap=60.0)
+                sleep_s = _backoff_seconds(reconnect_attempt, cap=float(self.config.fxcm_reconnect_backoff_cap_s))
                 next_retry_ts_ms = int(time.time() * 1000 + sleep_s * 1000)
                 err_ts = int(time.time() * 1000)
                 self.status.append_error(

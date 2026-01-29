@@ -32,13 +32,6 @@ class TickSimulator:
         if mode == "off":
             return
         if mode == "fxcm":
-            self.status.append_error(
-                code="tick_mode_not_supported",
-                severity="error",
-                message="tick_mode=fxcm не реалізовано у P1",
-            )
-            self.status.mark_degraded("tick_fxcm_not_implemented")
-            self.status.publish_snapshot()
             return
         if mode != "sim":
             self.status.append_error(

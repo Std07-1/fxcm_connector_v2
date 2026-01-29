@@ -12,6 +12,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
 - **UI Lite** як канонічна UI (HTTP + WS + /debug, health/STALE/overlay).
 - **Exit gates** як SSOT контроль якості (tools/run_exit_gates.py).
+- **FXCM tick feed (real)**: tick_mode=fxcm → FxcmForexConnectStream → TickPublisher → validate_tick_v1 → Redis, з liveness/debounce.
 
 ## Public Surface (SSOT)
 
@@ -45,6 +46,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - Redis.
 - .env використовується лише як перемикач профілю (AI_ONE_ENV_FILE).
 - Секрети тільки у .env.local/.env.prod (логін/пароль FXCM, токени).
+- tick_mode=fxcm потребує fxcm_backend=forexconnect (fail-fast).
 
 ## Швидкий старт (local)
 
@@ -75,6 +77,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 - Канонічний runner: tools/run_exit_gates.py.
 - Маніфести: tools/exit_gates/manifest*.json (P0/P1/P2/повний).
 - Bootstrap P0: tools/bootstrap_p0.ps1 (ruff/mypy/pytest + P0 gates).
+- Додаткові rails (P8): gate_fxcm_tick_mode_config, gate_fxcm_tick_liveness.
 
 ## Конфіг
 
@@ -159,7 +162,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- http_server.py                 # HTTP API (/api/*, /chart stub)
 |   |-- status.py                      # status snapshot + tick event/snap/skew + coverage telemetry + market.tz_backend
 |   |-- command_bus.py                 # обробка команд
-|   |-- tick_feed.py                   # публікація tick
+|   |-- tick_feed.py                   # tick feed: FxcmForexConnectStream → TickPublisher → Redis
 |   |-- replay_ticks.py                # replay ingest (REAL‑only)
 |   |-- fxcm_forexconnect.py           # FXCM інтеграція (tick_ts=event_ts, snap_ts=receipt_ts)
 |   |-- handlers_p3.py                 # командні handler'и P3
@@ -177,6 +180,8 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- ohlcv_sim*.py                  # runtime sim заборонено (rail)
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
+|       |-- tick_liveness.py           # liveness + debounce для stale_no_ticks
+|       `-- ...
 |-- store/                             # FileCache SSOT
 |   `-- file_cache/                    # FileCache (CSV + meta.json)
 |-- tests/                             # unit/contract/gate тести
@@ -193,6 +198,8 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |       `-- gates/                     # окремі gate'и
 |           |-- gate_tick_event_time_not_wallclock.py # rail: tick_ts_ms не з wall-clock
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
+|           |-- gate_fxcm_tick_mode_config.py # rail: tick_mode=fxcm → fxcm_backend=forexconnect
+|           |-- gate_fxcm_tick_liveness.py # rail: liveness debounce (cooldown)
 |-- ui_lite/                           # канонічна UI. “oscilloscope” для конектора
 |   |-- server.py                      # UI Lite HTTP + /debug + inbound OHLCV/status validation + health WS (N/A/STALE)
 |   `-- static/                        # UI Lite static assets

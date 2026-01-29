@@ -4,10 +4,8 @@ import asyncio
 import contextlib
 import json
 import logging
-import sys
 import threading
 import time
-import traceback
 from collections import deque
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -20,11 +18,17 @@ from websockets.legacy.server import WebSocketServerProtocol, serve
 
 from config.config import Config, load_config
 from core.env_loader import load_env
+from core.time.buckets import TF_TO_MS, get_bucket_open_ms
+from core.time.sessions import _to_utc_iso
 from core.validation.validator import ContractError, SchemaValidator
 
 log = logging.getLogger("ui_lite")
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+
+_WS_LOGGERS = ("websockets", "websockets.server", "websockets.client")
+for _name in _WS_LOGGERS:
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 
 @dataclass
@@ -37,7 +41,7 @@ class UiLiteHandle:
         try:
             self.thread.join(timeout=2.0)
         except KeyboardInterrupt:
-            print("Отримано KeyboardInterrupt. UI Lite завершено примусово")
+            log.warning("Отримано KeyboardInterrupt. UI Lite завершено примусово")
             return
 
 
@@ -82,6 +86,8 @@ HTTPResponse = Any
 class UiLiteState:
     lock: threading.Lock
     subscribed_channel: str
+    preview_publish_interval_ms: int = 0
+    trading_day_boundary_utc: str = ""
     redis_rx_total: int = 0
     redis_json_err_total: int = 0
     redis_contract_err_total: int = 0
@@ -92,6 +98,7 @@ class UiLiteState:
     last_payload_symbol: str = ""
     last_payload_tf: str = ""
     last_payload_ts_ms: int = 0
+    last_payload_rx_ms: int = 0
     last_payload_open_time_ms: int = 0
     last_payload_close_time_ms: int = 0
     last_payload_mode: str = ""
@@ -111,6 +118,8 @@ class UiLiteState:
         with self.lock:
             return {
                 "subscribed_channel": self.subscribed_channel,
+                "preview_publish_interval_ms": self.preview_publish_interval_ms,
+                "trading_day_boundary_utc": self.trading_day_boundary_utc,
                 "redis_rx_total": self.redis_rx_total,
                 "redis_json_err_total": self.redis_json_err_total,
                 "redis_contract_err_total": self.redis_contract_err_total,
@@ -121,6 +130,7 @@ class UiLiteState:
                 "last_payload_symbol": self.last_payload_symbol,
                 "last_payload_tf": self.last_payload_tf,
                 "last_payload_ts_ms": self.last_payload_ts_ms,
+                "last_payload_rx_ms": self.last_payload_rx_ms,
                 "last_payload_open_time_ms": self.last_payload_open_time_ms,
                 "last_payload_close_time_ms": self.last_payload_close_time_ms,
                 "last_payload_mode": self.last_payload_mode,
@@ -167,27 +177,27 @@ def _process_request(path: str, _headers: Any) -> Optional[HTTPResponse]:
         if path in ("/", "/index.html"):
             file_path = static_dir / "index.html"
             response = _read_file(file_path, "text/html; charset=utf-8")
-            print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+            log.debug("UI Lite HTTP %s -> %s", path, response[0])
             return response
         if path == "/app.js":
             file_path = static_dir / "app.js"
             response = _read_file(file_path, "application/javascript; charset=utf-8")
-            print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+            log.debug("UI Lite HTTP %s -> %s", path, response[0])
             return response
         if path == "/chart_adapter.js":
             file_path = static_dir / "chart_adapter.js"
             response = _read_file(file_path, "application/javascript; charset=utf-8")
-            print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+            log.debug("UI Lite HTTP %s -> %s", path, response[0])
             return response
         if path == "/styles.css":
             file_path = static_dir / "styles.css"
             response = _read_file(file_path, "text/css; charset=utf-8")
-            print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+            log.debug("UI Lite HTTP %s -> %s", path, response[0])
             return response
         if path == "/vendor/lightweight-charts.standalone.production.js":
             file_path = static_dir / "vendor" / "lightweight-charts.standalone.production.js"
             response = _read_file(file_path, "application/javascript; charset=utf-8")
-            print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+            log.debug("UI Lite HTTP %s -> %s", path, response[0])
             return response
         if path == "/favicon.ico":
             response = (
@@ -195,7 +205,7 @@ def _process_request(path: str, _headers: Any) -> Optional[HTTPResponse]:
                 _make_headers("image/x-icon", 0),
                 b"",
             )
-            print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+            log.debug("UI Lite HTTP %s -> %s", path, response[0])
             return response
         body = b"not found"
         response = (
@@ -203,12 +213,12 @@ def _process_request(path: str, _headers: Any) -> Optional[HTTPResponse]:
             _make_headers("text/plain; charset=utf-8", len(body)),
             body,
         )
-        print(f"UI Lite HTTP {path} -> {response[0]}", file=sys.stderr, flush=True)
+        log.debug("UI Lite HTTP %s -> %s", path, response[0])
         return response
     except Exception as exc:
         msg = f"process_request error: {exc}".encode("utf-8")
         headers = _make_headers("text/plain; charset=utf-8", len(msg))
-        print(f"UI Lite HTTP {path} -> 500", file=sys.stderr, flush=True)
+        log.error("UI Lite HTTP %s -> 500", path)
         return HTTPStatus.INTERNAL_SERVER_ERROR, headers, msg
 
 
@@ -417,6 +427,7 @@ def _start_redis_subscriber(
             with _STATE.lock:
                 _STATE.last_payload_symbol = str(payload.get("symbol", ""))
                 _STATE.last_payload_tf = str(payload.get("tf", ""))
+                _STATE.last_payload_rx_ms = int(time.time() * 1000)
                 ts_val = int(payload.get("ts", 0))
                 if ts_val > 0:
                     _STATE.last_payload_ts_ms = ts_val
@@ -610,15 +621,299 @@ async def _health_broadcaster(
 
 
 async def _log_state(stop_event: threading.Event) -> None:
+    last_log_ms = 0
+    last_rx_total = 0
+    last_tx_total = 0
+    last_json_err = 0
+    last_contract_err = 0
+    last_status_invalid = 0
+    last_ohlcv_invalid = 0
+    last_clients: Optional[int] = None
+    last_status_ok: Optional[bool] = None
+    last_rails: Tuple[int, int, int] = (0, 0, 0)
+    last_summary_meta_ms = 0
     while not stop_event.is_set():
         await asyncio.sleep(5.0)
+        now_ms = int(time.time() * 1000)
         snap = _STATE.snapshot()
-        print(
-            "UI Lite stats: rx={redis_rx_total} json_err={redis_json_err_total} "
-            "clients={ws_clients} last={last_payload_symbol}/{last_payload_tf} ts={last_payload_ts_ms}".format(**snap),
-            file=sys.stderr,
-            flush=True,
+        rx_total = int(snap.get("redis_rx_total", 0))
+        tx_total = int(snap.get("ws_tx_total", 0))
+        json_err = int(snap.get("redis_json_err_total", 0))
+        contract_err = int(snap.get("redis_contract_err_total", 0))
+        status_invalid = int(snap.get("status_invalid_total", 0))
+        ohlcv_invalid = int(snap.get("ohlcv_inbound_invalid_total", 0))
+        clients = int(snap.get("ws_clients", 0))
+        status_ok = bool(snap.get("status_ok", False))
+        publish_interval_ms = int(snap.get("preview_publish_interval_ms", 0))
+        trading_day_boundary_utc = str(snap.get("trading_day_boundary_utc", "")) or "23:00"
+        if publish_interval_ms <= 0:
+            publish_interval_ms = 1000
+
+        error_changed = (
+            json_err > last_json_err
+            or contract_err > last_contract_err
+            or status_invalid > last_status_invalid
+            or ohlcv_invalid > last_ohlcv_invalid
         )
+        clients_changed = last_clients is not None and clients != last_clients
+        status_changed = last_status_ok is not None and status_ok != last_status_ok
+        time_due = now_ms - last_log_ms >= 60_000
+
+        if not (time_due or error_changed or clients_changed or status_changed):
+            continue
+
+        rx_delta = rx_total - last_rx_total
+        tx_delta = tx_total - last_tx_total
+        payload_rx_ms = int(snap.get("last_payload_rx_ms", 0))
+        payload_ts_ms = int(snap.get("last_payload_ts_ms", 0))
+        payload_age_ms = (now_ms - payload_ts_ms) if payload_ts_ms > 0 else None
+        if payload_rx_ms > 0:
+            payload_age_ms = now_ms - payload_rx_ms
+        status_ts_ms = int(snap.get("last_status_ts_ms", 0))
+        status_age_ms = (now_ms - status_ts_ms) if status_ts_ms > 0 else None
+        last_tf = str(snap.get("last_payload_tf", ""))
+        payload_age_s = (payload_age_ms / 1000.0) if payload_age_ms is not None else None
+        status_age_s = (status_age_ms / 1000.0) if status_age_ms is not None else None
+
+        status_snapshot = snap.get("last_status_snapshot")
+        status_payload: Dict[str, Any] = status_snapshot if isinstance(status_snapshot, dict) else {}
+        price_raw = status_payload.get("price")
+        fxcm_raw = status_payload.get("fxcm")
+        preview_raw = status_payload.get("ohlcv_preview")
+        price: Dict[str, Any] = price_raw if isinstance(price_raw, dict) else {}
+        fxcm: Dict[str, Any] = fxcm_raw if isinstance(fxcm_raw, dict) else {}
+        preview: Dict[str, Any] = preview_raw if isinstance(preview_raw, dict) else {}
+        last_publish_ts_ms = int(preview.get("last_publish_ts_ms", 0))
+        ohlcv_age_s = (now_ms - last_publish_ts_ms) / 1000.0 if last_publish_ts_ms > 0 else None
+        tick_lag_ms = int(price.get("tick_lag_ms", 0))
+        tick_lag_s = tick_lag_ms / 1000.0 if tick_lag_ms > 0 else 0.0
+        fxcm_state = str(fxcm.get("state", ""))
+        late_drop = int(preview.get("late_ticks_dropped_total", 0))
+        misalign = int(preview.get("misaligned_open_time_total", 0))
+        past_mut = int(preview.get("past_mutations_total", 0))
+        rails_changed = (late_drop, misalign, past_mut) != last_rails
+
+        if fxcm_state in {"", "connecting"}:
+            last_rx_total = rx_total
+            last_tx_total = tx_total
+            last_json_err = json_err
+            last_contract_err = contract_err
+            last_status_invalid = status_invalid
+            last_ohlcv_invalid = ohlcv_invalid
+            last_clients = clients
+            last_status_ok = status_ok
+            continue
+
+        last_open_map = preview.get("last_bar_open_time_ms")
+        last_open_by_tf = last_open_map if isinstance(last_open_map, dict) else {}
+        freshest_tf = ""
+        freshest_open_ms = 0
+        for tf_key, open_ms in last_open_by_tf.items():
+            try:
+                open_ms_int = int(open_ms)
+            except Exception:
+                continue
+            if open_ms_int > freshest_open_ms:
+                freshest_open_ms = open_ms_int
+                freshest_tf = str(tf_key)
+
+        stale_tf = ""
+        stale_delay_bars = 0
+        expected_open_ms = 0
+        last_open_ms = 0
+        for tf_key, open_ms in last_open_by_tf.items():
+            tf_ms = TF_TO_MS.get(str(tf_key))
+            if tf_ms is None:
+                continue
+            try:
+                open_ms_int = int(open_ms)
+            except Exception:
+                continue
+            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, trading_day_boundary_utc)
+            delay_bars = max(0, int((expected_ms - open_ms_int) // tf_ms))
+            if delay_bars >= stale_delay_bars:
+                stale_delay_bars = delay_bars
+                stale_tf = str(tf_key)
+                expected_open_ms = int(expected_ms)
+                last_open_ms = int(open_ms_int)
+
+        expected_open_utc = _to_utc_iso(expected_open_ms) if expected_open_ms > 0 else "-"
+        last_open_utc = _to_utc_iso(last_open_ms) if last_open_ms > 0 else "-"
+
+        transport = "OK"
+        transport_reason = "ok"
+        next_action = "-"
+        if fxcm_state == "connecting":
+            transport = "WARN"
+            transport_reason = "fxcm_connecting"
+            next_action = "очікується FXCM login"
+        if not status_ok:
+            transport = "WARN"
+            transport_reason = "status_missing"
+            next_action = "перевірити status snapshot"
+        if status_age_s is not None and status_age_s > 10.0:
+            transport = "ERROR"
+            transport_reason = "status_stale"
+            next_action = "перевірити status publisher"
+        elif status_age_s is not None and status_age_s > 2.0:
+            transport = "WARN"
+            transport_reason = "status_lag"
+            next_action = "перевірити status publisher"
+
+        if ohlcv_age_s is not None:
+            if ohlcv_age_s > 30.0:
+                transport = "ERROR"
+                transport_reason = "ohlcv_stale"
+                next_action = "перевірити publish OHLCV preview"
+            elif ohlcv_age_s > 15.0:
+                transport = "WARN"
+                transport_reason = "ohlcv_lag"
+                next_action = "перевірити publish OHLCV preview"
+            elif ohlcv_age_s > 2.0 and transport == "OK":
+                transport = "WARN"
+                transport_reason = "ohlcv_lag"
+
+        if tick_lag_s > 5.0:
+            transport = "ERROR"
+            transport_reason = "tick_lag"
+            next_action = "перевірити FXCM стрім/підключення"
+        elif tick_lag_s > 1.0 and transport == "OK":
+            transport = "WARN"
+            transport_reason = "tick_lag"
+
+        data_state = "OK"
+        if stale_delay_bars >= 3:
+            data_state = "ERROR"
+        elif stale_delay_bars >= 1:
+            data_state = "WARN"
+
+        health = transport
+        if transport == "OK" and data_state != "OK":
+            health = data_state
+
+        status_age_str = f"{status_age_s:.1f}s" if status_age_s is not None else "-"
+        ohlcv_age_str = f"{ohlcv_age_s:.1f}s" if ohlcv_age_s is not None else "-"
+        payload_age_str = f"{payload_age_s:.1f}s" if payload_age_s is not None else "-"
+        tx_suffix = " (no_clients)" if clients == 0 else ""
+        fresh_tf = freshest_tf or "-"
+        last_tf_short = last_tf or "-"
+        keys_line = f"keys: fresh={fresh_tf} last={last_tf_short}"
+        data_tf = stale_tf or fresh_tf
+        exp_time = expected_open_utc
+        got_time = last_open_utc
+        if exp_time != "-" and "T" in exp_time:
+            exp_time = exp_time.split("T", 1)[1][:5] + "Z"
+        if got_time != "-" and "T" in got_time:
+            got_time = got_time.split("T", 1)[1][:5] + "Z"
+        data_line = f"{data_tf} exp={exp_time} got={got_time} delay={stale_delay_bars}"
+
+        log_level = log.info if health == "OK" else log.warning
+        log_level(
+            "UI_LITE: \n"
+            "Health=%s transport=%s data=%s fxcm=%s \n"
+            "IO clients=%s rx=+%s/5s tx=+%s/5s%s \n"
+            "FRESH status=%s ohlcv=%s payload=%s tick=%.1fs \n%s | %s | %s \n"
+            "Rails late=%s mis=%s past=%s%s \n",
+            health,
+            transport,
+            data_state,
+            fxcm_state,
+            clients,
+            rx_delta,
+            tx_delta,
+            tx_suffix,
+            status_age_str,
+            ohlcv_age_str,
+            payload_age_str,
+            tick_lag_s,
+            keys_line,
+            data_line,
+            transport_reason if health != "OK" else "-",
+            late_drop,
+            misalign,
+            past_mut,
+            f" | next={next_action}" if health != "OK" else "",
+        )
+
+        if (
+            stale_delay_bars > 0
+            or transport != "OK"
+            or data_state != "OK"
+            or rails_changed
+            or late_drop
+            or misalign
+            or past_mut
+        ):
+            summary_parts = []
+            if stale_tf and stale_delay_bars > 0:
+                delay_s = float(stale_delay_bars * (TF_TO_MS.get(stale_tf, 0) or 0)) / 1000.0
+                if last_open_ms <= 0:
+                    delay_str = "-"
+                elif delay_s >= 3600.0:
+                    delay_str = f"{delay_s / 3600.0:.1f}h"
+                else:
+                    delay_str = f"{delay_s / 60.0:.1f}m"
+                expected_short = expected_open_utc
+                last_short = last_open_utc
+                if expected_short != "-" and "T" in expected_short:
+                    expected_short = expected_short.split("T", 1)[1][:5] + "Z"
+                if last_short != "-" and "T" in last_short:
+                    last_short = last_short.split("T", 1)[1][:5] + "Z"
+                summary_parts.append(
+                    "stale_tf={tf} delay={delay} expected={expected} last={last}".format(
+                        tf=stale_tf,
+                        delay=delay_str,
+                        expected=expected_short,
+                        last=last_short,
+                    )
+                )
+            if summary_parts:
+                log.warning("ohlcv_preview %s", "; ".join(summary_parts))
+            top_parts = []
+            for tf_key, open_ms in last_open_by_tf.items():
+                tf_ms = TF_TO_MS.get(str(tf_key))
+                if tf_ms is None:
+                    continue
+                try:
+                    open_ms_int = int(open_ms)
+                except Exception:
+                    continue
+                expected_ms = get_bucket_open_ms(str(tf_key), now_ms, trading_day_boundary_utc)
+                delay_bars = max(0, int((expected_ms - open_ms_int) // tf_ms))
+                if delay_bars > 0:
+                    if open_ms_int <= 0:
+                        continue
+                    delay_s = float(delay_bars * tf_ms) / 1000.0
+                    if delay_s >= 3600.0:
+                        delay_str = f"{delay_s / 3600.0:.1f}h"
+                    else:
+                        delay_str = f"{delay_s / 60.0:.1f}m"
+                    top_parts.append(f"{tf_key}:delay={delay_str}")
+            if top_parts:
+                log.warning("top_tf: %s", ", ".join(top_parts[:4]))
+
+        if now_ms - last_summary_meta_ms >= 600_000:
+            market_raw = status_payload.get("market")
+            market = market_raw if isinstance(market_raw, dict) else {}
+            calendar_tag = str(market.get("calendar_tag", ""))
+            if calendar_tag:
+                log.debug(
+                    "calendar_tag=%s trading_day_boundary_utc=%s",
+                    calendar_tag,
+                    trading_day_boundary_utc,
+                )
+            last_summary_meta_ms = now_ms
+
+        last_log_ms = now_ms
+        last_rx_total = rx_total
+        last_tx_total = tx_total
+        last_json_err = json_err
+        last_contract_err = contract_err
+        last_status_invalid = status_invalid
+        last_ohlcv_invalid = ohlcv_invalid
+        last_clients = clients
+        last_status_ok = status_ok
+        last_rails = (late_drop, misalign, past_mut)
 
 
 async def _run_server(config: Config, redis_client: redis.Redis, stop_event: threading.Event) -> None:
@@ -630,6 +925,8 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
     validator = SchemaValidator(root_dir=Path(__file__).resolve().parents[1])
     with _STATE.lock:
         _STATE.subscribed_channel = config.ch_ohlcv()
+        _STATE.preview_publish_interval_ms = int(config.ohlcv_preview_publish_interval_ms)
+        _STATE.trading_day_boundary_utc = str(config.trading_day_boundary_utc)
     log.debug("UI Lite startup: redis_channel=%s", config.ch_ohlcv())
     _start_redis_subscriber(
         redis_client,
@@ -658,11 +955,7 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
                 port=config.ui_lite_port,
                 process_request=_process_request,  # type: ignore[arg-type]
             ):
-                print(
-                    f"UI Lite слухає http://{config.ui_lite_host}:{config.ui_lite_port}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                log.info("UI Lite слухає http://%s:%s", config.ui_lite_host, config.ui_lite_port)
                 broadcaster_task = asyncio.create_task(_broadcaster(queue, clients, dedup, subs))
                 health_task = asyncio.create_task(_health_broadcaster(stop_event, clients))
                 log_task = asyncio.create_task(_log_state(stop_event))
@@ -672,7 +965,7 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
                         return
                     exc = task.exception()
                     if exc is not None:
-                        print(f"UI Lite broadcaster error: {exc}", file=sys.stderr)
+                        log.error("UI Lite broadcaster error: %s", exc)
 
                 broadcaster_task.add_done_callback(_on_broadcaster_done)
                 try:
@@ -690,10 +983,10 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
             break
         except OSError as exc:
             if _is_port_in_use_error(exc):
-                print(
-                    f"UI Lite порт зайнятий {config.ui_lite_host}:{config.ui_lite_port}, повтор через 2с.",
-                    file=sys.stderr,
-                    flush=True,
+                log.warning(
+                    "UI Lite порт зайнятий %s:%s, повтор через 2с.",
+                    config.ui_lite_host,
+                    config.ui_lite_port,
                 )
                 await asyncio.sleep(2.0)
                 continue
@@ -724,16 +1017,16 @@ def main() -> None:
     redis_client = redis.Redis.from_url(config.redis_dsn(), decode_responses=True)
     stop_event = threading.Event()
     try:
-        print("UI Lite стартує…", file=sys.stderr, flush=True)
+        log.info("UI Lite стартує…")
         asyncio.run(_run_server(config, redis_client, stop_event))
     except KeyboardInterrupt:
         stop_event.set()
     except Exception as exc:
-        print(f"UI Lite запуск зірвався: {exc}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        log.error("UI Lite запуск зірвався: %s", exc)
+        log.exception("UI Lite traceback")
         raise
     finally:
-        print("UI Lite зупинено примусово (Ctrl+C).", file=sys.stderr, flush=True)
+        log.info("UI Lite зупинено примусово (Ctrl+C).")
         stop_event.set()
 
 
