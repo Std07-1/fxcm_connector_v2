@@ -8,11 +8,12 @@ from runtime.history_provider import HistoryProvider
 
 @dataclass
 class HistoryFxcmProvider(HistoryProvider):
-    """Скелет провайдера FXCM (без реальної інтеграції у P3)."""
+    """LEGACY/UNUSED: застаріла заглушка провайдера FXCM.
 
-    def fetch_1m_final(
-        self, symbol: str, start_ms: int, end_ms: int, limit: int
-    ) -> List[Dict]:
+    Реальна інтеграція історії знаходиться у runtime/fxcm/history_provider.py.
+    """
+
+    def fetch_1m_final(self, symbol: str, start_ms: int, end_ms: int, limit: int) -> List[Dict]:
         raise RuntimeError(
-            "FXCM провайдер не налаштований у P3. Використай provider=sim."
+            "LEGACY/UNUSED: застаріла заглушка FXCM history. Використай runtime/fxcm/history_provider.py"
         )

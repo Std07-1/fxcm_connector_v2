@@ -29,7 +29,7 @@ def test_no_mix_detects_conflict() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
     config = Config()
-    calendar = Calendar([], config.calendar_tag)
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     metrics = create_metrics(CollectorRegistry())
     publisher = InMemoryPublisher()
     status = StatusManager(

@@ -18,7 +18,7 @@ class _DummyPublisher:
 
 def test_fxcm_disabled_by_default() -> None:
     config = Config()
-    calendar = Calendar([], config.calendar_tag)
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     validator = SchemaValidator(root_dir=Path(__file__).resolve().parents[1])
     status = StatusManager(
         config=config,

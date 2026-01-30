@@ -12,7 +12,7 @@ def _ms(year: int, month: int, day: int, hour: int, minute: int, second: int = 0
 
 
 def run() -> Tuple[bool, str]:
-    calendar = Calendar([], "fxcm_calendar_v1_ny")
+    calendar = Calendar(calendar_tag="fxcm_calendar_v1_ny")
     ts_ms = _ms(2026, 1, 20, 21, 59, 30)
     break_start_ms = _ms(2026, 1, 20, 22, 0, 0)
     if not calendar.is_open(ts_ms):

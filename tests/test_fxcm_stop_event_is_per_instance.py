@@ -5,10 +5,9 @@ from pathlib import Path
 from config.config import Config
 from core.time.calendar import Calendar
 from core.validation.validator import SchemaValidator
+from runtime.fxcm_forexconnect import FxcmForexConnectStream
 from runtime.publisher import RedisPublisher
 from runtime.status import StatusManager
-from runtime.tick_feed import TickPublisher
-from tests.fixtures.sim.tick_simulator import TickSimulator
 
 
 class _DummyRedis:
@@ -19,10 +18,10 @@ class _DummyRedis:
         return None
 
 
-def test_tick_mode_fxcm_no_simulator_error() -> None:
+def _build_status() -> StatusManager:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
-    config = Config(tick_mode="fxcm")
+    config = Config()
     calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     publisher = RedisPublisher(_DummyRedis(), config)
     status = StatusManager(
@@ -33,18 +32,14 @@ def test_tick_mode_fxcm_no_simulator_error() -> None:
         metrics=None,
     )
     status.build_initial_snapshot()
+    return status
 
-    tick_publisher = TickPublisher(
-        config=config,
-        publisher=publisher,
-        validator=validator,
-        status=status,
-    )
-    sim = TickSimulator(config=config, publisher=tick_publisher, status=status)
-    sim.start()
 
-    snapshot = status.snapshot()
-    degraded = snapshot.get("degraded", [])
-    errors = snapshot.get("errors", [])
-    assert "tick_fxcm_not_implemented" not in degraded
-    assert not any(err.get("code") == "tick_mode_not_supported" for err in errors)
+def test_fxcm_stop_event_is_per_instance() -> None:
+    config = Config()
+    status = _build_status()
+
+    stream_a = FxcmForexConnectStream(config=config, status=status, on_tick=lambda *_: None)
+    stream_b = FxcmForexConnectStream(config=config, status=status, on_tick=lambda *_: None)
+
+    assert stream_a._stop_event is not stream_b._stop_event

@@ -26,7 +26,7 @@ def test_fxcm_sdk_missing_is_loud_error(monkeypatch: pytest.MonkeyPatch) -> None
         fxcm_username="demo",
         fxcm_password="demo",
     )
-    calendar = Calendar([], config.calendar_tag)
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     validator = SchemaValidator(root_dir=Path(__file__).resolve().parents[1])
     status = StatusManager(
         config=config,

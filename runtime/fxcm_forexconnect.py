@@ -4,7 +4,7 @@ import logging
 import random
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from typing_extensions import Protocol
@@ -348,13 +348,6 @@ class FXCMOfferSubscription:
         self._offers_table = None
 
 
-def _next_open_ms(now_ms: int, closed_intervals: list) -> int:
-    for start_ms, end_ms in closed_intervals:
-        if start_ms <= now_ms < end_ms:
-            return int(end_ms)
-    return now_ms
-
-
 def _backoff_seconds(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
     delay: float = float(min(cap, base * (2**attempt)))
     jitter = random.uniform(0.0, delay * 0.2)
@@ -375,7 +368,7 @@ class FxcmForexConnectStream:
     on_tick: Callable[[str, float, float, float, int, int], None]
 
     _thread: Optional[threading.Thread] = None
-    _stop_event: threading.Event = threading.Event()
+    _stop_event: threading.Event = field(default_factory=threading.Event)
 
     def start(self) -> Optional[FxcmForexConnectHandle]:
         if not ensure_fxcm_ready(self.config, self.status):
@@ -455,7 +448,7 @@ class FxcmForexConnectStream:
             now_ms = int(time.time() * 1000)
             if not self.status.calendar.is_open(now_ms):
                 self.status.clear_degraded("fxcm_stale_no_ticks")
-                next_open_ms = _next_open_ms(now_ms, self.config.closed_intervals_utc)
+                next_open_ms = self.status.calendar.next_open_ms(now_ms)
                 reconnect_attempt += 1
                 backoff_s = _backoff_seconds(reconnect_attempt, cap=float(self.config.fxcm_reconnect_backoff_cap_s))
                 retry_ms = max(next_open_ms, int(now_ms + backoff_s * 1000))

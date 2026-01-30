@@ -119,9 +119,10 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
         log.info("/metrics піднято на порту %s", config.metrics_port)
 
     calendar = Calendar(
-        closed_intervals_utc=config.closed_intervals_utc,
         calendar_tag=config.calendar_tag,
+        overrides_path=config.calendar_path,
     )
+    validator.calendar = calendar
 
     status = StatusManager(
         config=config,
@@ -172,7 +173,7 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
             raise SystemExit("FXCM preview: secrets відсутні")
 
     cache = OhlcvCache()
-    preview_builder = PreviewCandleBuilder(config=config, cache=cache, status=status)
+    preview_builder = PreviewCandleBuilder(config=config, cache=cache, calendar=calendar, status=status)
 
     http_server = HttpServer(
         config=config,
@@ -589,7 +590,7 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                             if tf_ms is None:
                                 continue
                             last_open_ms = int(ohlcv_last_open_by_tf.get(tf_key, 0))
-                            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, config.trading_day_boundary_utc)
+                            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, calendar)
                             delay_bars = max(0, int((expected_ms - last_open_ms) // tf_ms))
                             if delay_bars >= stale_delay_bars:
                                 stale_delay_bars = delay_bars
@@ -625,15 +626,7 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                                     "ohlcv_preview WARN stale_tf=%s delay_bars=%s expected=%s last=%s",
                                     stale_tf,
                                     stale_delay_bars,
-                                    _to_utc_iso(
-                                        int(
-                                            get_bucket_open_ms(
-                                                str(stale_tf),
-                                                now_ms,
-                                                config.trading_day_boundary_utc,
-                                            )
-                                        )
-                                    ),
+                                    _to_utc_iso(int(get_bucket_open_ms(str(stale_tf), now_ms, calendar))),
                                     _to_utc_iso(int(ohlcv_last_open_by_tf.get(stale_tf, 0))),
                                 )
                             if top_delay_parts:

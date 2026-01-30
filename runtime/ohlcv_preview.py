@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from config.config import Config
+from core.time.calendar import Calendar
 from runtime.preview_builder import OhlcvCache, PreviewBuilder
 from runtime.status import StatusManager
 
@@ -14,11 +15,17 @@ class PreviewCandleBuilder:
 
     config: Config
     cache: OhlcvCache
+    calendar: Calendar
     status: Optional[StatusManager] = None
     _inner: PreviewBuilder = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        self._inner = PreviewBuilder(config=self.config, cache=self.cache, status=self.status)
+        self._inner = PreviewBuilder(
+            config=self.config,
+            cache=self.cache,
+            status=self.status,
+            calendar=self.calendar,
+        )
 
     def on_tick(self, symbol: str, mid: float, tick_ts_ms: int) -> None:
         self._inner.on_tick(symbol=symbol, mid=mid, tick_ts_ms=tick_ts_ms)

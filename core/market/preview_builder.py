@@ -8,6 +8,7 @@ from typing_extensions import Protocol
 
 from config.config import Config
 from core.time.buckets import TF_TO_MS, get_bucket_close_ms, get_bucket_open_ms
+from core.time.calendar import Calendar
 
 
 class PreviewRail(Protocol):
@@ -94,6 +95,7 @@ class PreviewBuilder:
     config: Config
     cache: OhlcvCache
     status: Optional[PreviewRail] = None
+    calendar: Optional[Calendar] = None
     last_publish_ms: int = 0
     _current_bars: Dict[Tuple[str, str], OhlcvBar] = field(default_factory=dict)
     _stream_state: Dict[Tuple[str, str], PreviewStreamState] = field(default_factory=dict)
@@ -104,7 +106,9 @@ class PreviewBuilder:
             if size is None:
                 continue
             if tf == "1d":
-                bucket_start = get_bucket_open_ms(tf, int(tick_ts_ms), self.config.trading_day_boundary_utc)
+                if self.calendar is None:
+                    raise ValueError("Calendar є обов'язковим для 1d boundary")
+                bucket_start = get_bucket_open_ms(tf, int(tick_ts_ms), self.calendar)
             else:
                 bucket_start = int(tick_ts_ms) // size * size
             if tf != "1d" and bucket_start % size != 0:
@@ -129,7 +133,12 @@ class PreviewBuilder:
                 }
                 self._sync_preview_rail(tf, state)
                 continue
-            bucket_close = get_bucket_close_ms(tf, bucket_start, self.config.trading_day_boundary_utc)
+            if tf == "1d":
+                if self.calendar is None:
+                    raise ValueError("Calendar є обов'язковим для 1d boundary")
+                bucket_close = get_bucket_close_ms(tf, bucket_start, self.calendar)
+            else:
+                bucket_close = get_bucket_close_ms(tf, bucket_start, None)
             key = (symbol, tf)
             current = self._current_bars.get(key)
             if current is None or current.open_time != bucket_start:

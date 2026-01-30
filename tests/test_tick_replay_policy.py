@@ -24,7 +24,7 @@ def _ms(year: int, month: int, day: int, hour: int, minute: int, second: int = 0
 def _policy() -> TickReplayPolicy:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
-    calendar = Calendar([], "fxcm_calendar_v1_ny")
+    calendar = Calendar(calendar_tag="fxcm_calendar_v1_ny")
     return TickReplayPolicy(calendar=calendar, validator=validator)
 
 

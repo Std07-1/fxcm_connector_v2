@@ -143,7 +143,7 @@ def main() -> None:
     channel_price = cfg.ch_price_tik()
     channel_ohlcv = cfg.ch_ohlcv()
     validator = SchemaValidator(root_dir=Path(__file__).resolve().parents[1])
-    calendar = Calendar([], cfg.calendar_tag)
+    calendar = Calendar(calendar_tag=cfg.calendar_tag, overrides_path=cfg.calendar_path)
     policy = TickReplayPolicy(calendar=calendar, validator=validator)
 
     client = redis.Redis(host=args.redis_host, port=args.redis_port, decode_responses=True)

@@ -21,10 +21,7 @@ class _DummyRedis:
 def test_history_provider_configured() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     config = Config(history_provider_kind="fxcm_forexconnect")
-    calendar = Calendar(
-        closed_intervals_utc=config.closed_intervals_utc,
-        calendar_tag=config.calendar_tag,
-    )
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     validator = SchemaValidator(root_dir=root_dir)
     status = StatusManager(
         config=config,

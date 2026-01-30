@@ -28,10 +28,7 @@ def test_tick_publisher_updates_status() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
     config = Config(tick_mode="off")
-    calendar = Calendar(
-        closed_intervals_utc=config.closed_intervals_utc,
-        calendar_tag=config.calendar_tag,
-    )
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     redis_client = _DummyRedis()
     publisher = RedisPublisher(redis_client, config)
     status = StatusManager(

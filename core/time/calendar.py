@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -8,15 +9,28 @@ from core.time.closed_intervals import normalize_closed_intervals_utc
 from core.time.sessions import CalendarOverrides, TradingCalendar, _to_utc_iso, load_calendar_overrides
 
 
-@dataclass
+@dataclass(init=False)
 class Calendar:
     """SSOT календар з підтримкою сесій та daily break (DST-aware)."""
 
-    closed_intervals_utc: List[Tuple[int, int]]
     calendar_tag: str
+    closed_intervals_utc: List[Tuple[int, int]] = field(default_factory=list)
     overrides_path: str = "config/calendar_overrides.json"
     _calendar: TradingCalendar = field(init=False, repr=False)
     _init_error: Optional[str] = field(init=False, default=None)
+
+    def __init__(
+        self,
+        closed_intervals_utc: Optional[List[Tuple[int, int]]] = None,
+        calendar_tag: str = "",
+        overrides_path: str = "config/calendar_overrides.json",
+    ) -> None:
+        self.closed_intervals_utc = list(closed_intervals_utc or [])
+        self.calendar_tag = calendar_tag
+        self.overrides_path = overrides_path
+        self._calendar = None  # type: ignore[assignment]
+        self._init_error = None
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         overrides: Optional[CalendarOverrides] = None
@@ -104,3 +118,23 @@ class Calendar:
         if not safe_only_when_market_closed:
             return True
         return not self.is_open(now_ms)
+
+    def trading_day_boundary_for(self, ts_ms: int) -> int:
+        if self._init_error:
+            return ts_ms
+        dt_utc = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        dt_local = dt_utc.astimezone(self._calendar._tz)
+        boundary_local = datetime.combine(dt_local.date(), self._calendar._break_start, tzinfo=self._calendar._tz)
+        if dt_local < boundary_local:
+            boundary_local = boundary_local - timedelta(days=1)
+        return int(boundary_local.astimezone(timezone.utc).timestamp() * 1000)
+
+    def next_trading_day_boundary_ms(self, ts_ms: int) -> int:
+        if self._init_error:
+            return ts_ms
+        dt_utc = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        dt_local = dt_utc.astimezone(self._calendar._tz)
+        boundary_local = datetime.combine(dt_local.date(), self._calendar._break_start, tzinfo=self._calendar._tz)
+        if dt_local >= boundary_local:
+            boundary_local = boundary_local + timedelta(days=1)
+        return int(boundary_local.astimezone(timezone.utc).timestamp() * 1000)

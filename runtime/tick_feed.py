@@ -55,7 +55,6 @@ class TickPublisher:
                 self.status.mark_degraded("tick_out_of_order")
                 self.status.record_tick_contract_reject()
                 self.status.record_fxcm_contract_reject()
-                self.status.record_fxcm_tick_drop("out_of_order")
                 return
         payload = {
             "symbol": symbol,
@@ -85,5 +84,4 @@ class TickPublisher:
             self.status.mark_degraded("tick_contract_error")
             self.status.record_tick_contract_reject()
             self.status.record_fxcm_contract_reject()
-            self.status.record_fxcm_tick_drop("contract_error")
             return

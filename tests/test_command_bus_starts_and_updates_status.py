@@ -42,7 +42,7 @@ def test_command_bus_starts_and_updates_status() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
     config = Config(command_bus_heartbeat_period_s=1)
-    calendar = Calendar([], config.calendar_tag)
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     metrics = create_metrics(CollectorRegistry())
     publisher = _InMemoryPublisher()
     status = StatusManager(

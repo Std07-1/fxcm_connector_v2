@@ -3,23 +3,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, cast
+from typing import Any, Dict, Optional, cast
 
 from jsonschema import Draft7Validator
 
 from config.config import Config
-from core.time.buckets import TF_TO_MS, trading_day_boundary_offset_ms
+from core.time.buckets import TF_TO_MS
+from core.time.calendar import Calendar
+from core.time.epoch_rails import MAX_EPOCH_MS, MIN_EPOCH_MS
+from core.validation.errors import ContractError
 
 TF_ALLOWLIST = {"1m", "5m", "15m", "1h", "4h", "1d"}
 HTF_FINAL_ALLOWLIST = {"5m", "15m", "1h", "4h", "1d"}
 SOURCE_ALLOWLIST = {"stream", "history", "history_agg", "synthetic"}
 FINAL_SOURCES = {"history", "history_agg"}
-MIN_EPOCH_MS = 1_000_000_000_000
-MAX_EPOCH_MS = 9_999_999_999_999
-
-
-class ContractError(ValueError):
-    """Помилка контракту: payload не відповідає allowlist schema."""
 
 
 def _format_error_message(err: Any) -> str:
@@ -82,17 +79,20 @@ def _require_canonical_ohlcv_keys(bar: Dict[str, Any]) -> None:
         raise ContractError("OHLCV має використовувати open/high/low/close/volume")
 
 
-def _require_bucket_boundary(tf: str, open_time: int, close_time: int) -> None:
+def _require_bucket_boundary(tf: str, open_time: int, close_time: int, calendar: Calendar) -> None:
     size = TF_TO_MS.get(tf)
     if size is None:
         raise ContractError(f"Невідомий TF для bucket: {tf}")
     if tf == "1d":
-        offset = trading_day_boundary_offset_ms(Config().trading_day_boundary_utc)
-        if open_time % size != offset:
-            raise ContractError("open_time має бути вирівняний по trading_day_boundary_utc")
-    else:
-        if open_time % size != 0:
-            raise ContractError("open_time має бути вирівняний по bucket")
+        expected_open = calendar.trading_day_boundary_for(open_time)
+        if int(open_time) != int(expected_open):
+            raise ContractError("open_time має бути вирівняний по trading_day_boundary (calendar)")
+        expected_close = calendar.next_trading_day_boundary_ms(open_time) - 1
+        if int(close_time) != int(expected_close):
+            raise ContractError("close_time має дорівнювати next_trading_day_boundary_ms - 1")
+        return
+    if open_time % size != 0:
+        raise ContractError("open_time має бути вирівняний по bucket")
     expected_close = open_time + size - 1
     if close_time != expected_close:
         raise ContractError("close_time має дорівнювати bucket_end_ms - 1")
@@ -122,9 +122,16 @@ class SchemaValidator:
     """Валідатор payload за JSON schema з fail-fast."""
 
     root_dir: Path
+    calendar: Optional[Calendar] = None
 
     def _store(self) -> SchemaStore:
         return SchemaStore(self.root_dir)
+
+    def _calendar(self) -> Calendar:
+        if self.calendar is not None:
+            return self.calendar
+        config = Config()
+        return Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
 
     def validate(self, rel_schema_path: str, payload: Dict[str, Any]) -> None:
         schema = self._store().load(rel_schema_path)
@@ -187,7 +194,7 @@ class SchemaValidator:
             _require_ms_int(bar.get("close_time"), "close_time")
             if int(bar.get("open_time")) >= int(bar.get("close_time")):
                 raise ContractError("open_time має бути < close_time")
-            _require_bucket_boundary("1m", int(bar.get("open_time")), int(bar.get("close_time")))
+            _require_bucket_boundary("1m", int(bar.get("open_time")), int(bar.get("close_time")), self._calendar())
             if bar.get("complete") is not True:
                 raise ContractError("final 1m має complete=true")
             if bar.get("synthetic") is not False:
@@ -228,7 +235,7 @@ class SchemaValidator:
             _require_ms_int(bar.get("close_time"), "close_time")
             if int(bar.get("open_time")) >= int(bar.get("close_time")):
                 raise ContractError("open_time має бути < close_time")
-            _require_bucket_boundary(tf, int(bar.get("open_time")), int(bar.get("close_time")))
+            _require_bucket_boundary(tf, int(bar.get("open_time")), int(bar.get("close_time")), self._calendar())
             _require_ohlcv_invariants(bar)
             if bar.get("complete") is not True:
                 raise ContractError("bar має complete=true")
@@ -284,7 +291,7 @@ class SchemaValidator:
             _require_canonical_ohlcv_keys(bar)
             _require_ms_int(bar.get("open_time"), "open_time")
             _require_ms_int(bar.get("close_time"), "close_time")
-            _require_bucket_boundary(tf, int(bar.get("open_time")), int(bar.get("close_time")))
+            _require_bucket_boundary(tf, int(bar.get("open_time")), int(bar.get("close_time")), self._calendar())
             bar_source = str(bar.get("source"))
             _require_source_allowed(bar_source)
             bar_complete = bool(bar.get("complete"))

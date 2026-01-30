@@ -3,10 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from core.validation.validator import ContractError
-
-MIN_EPOCH_MS = 1_000_000_000_000
-MAX_EPOCH_MS = 9_999_999_999_999
+from core.time.epoch_rails import MAX_EPOCH_MS, MIN_EPOCH_MS
+from core.validation.errors import ContractError
 
 
 def to_epoch_ms_utc(dt_or_ts: Any) -> int:

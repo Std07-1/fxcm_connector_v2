@@ -23,10 +23,7 @@ def test_tick_contract_reject_degrade_loud() -> None:
     root_dir = Path(__file__).resolve().parents[1]
     validator = SchemaValidator(root_dir=root_dir)
     config = Config(tick_mode="fxcm")
-    calendar = Calendar(
-        closed_intervals_utc=config.closed_intervals_utc,
-        calendar_tag=config.calendar_tag,
-    )
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     publisher = RedisPublisher(_DummyRedis(), config)
     metrics = create_metrics()
     status = StatusManager(

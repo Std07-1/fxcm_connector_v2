@@ -19,6 +19,7 @@ from websockets.legacy.server import WebSocketServerProtocol, serve
 from config.config import Config, load_config
 from core.env_loader import load_env
 from core.time.buckets import TF_TO_MS, get_bucket_open_ms
+from core.time.calendar import Calendar
 from core.time.sessions import _to_utc_iso
 from core.validation.validator import ContractError, SchemaValidator
 
@@ -87,7 +88,7 @@ class UiLiteState:
     lock: threading.Lock
     subscribed_channel: str
     preview_publish_interval_ms: int = 0
-    trading_day_boundary_utc: str = ""
+    calendar: Optional[Calendar] = None
     redis_rx_total: int = 0
     redis_json_err_total: int = 0
     redis_contract_err_total: int = 0
@@ -119,7 +120,6 @@ class UiLiteState:
             return {
                 "subscribed_channel": self.subscribed_channel,
                 "preview_publish_interval_ms": self.preview_publish_interval_ms,
-                "trading_day_boundary_utc": self.trading_day_boundary_utc,
                 "redis_rx_total": self.redis_rx_total,
                 "redis_json_err_total": self.redis_json_err_total,
                 "redis_contract_err_total": self.redis_contract_err_total,
@@ -645,7 +645,7 @@ async def _log_state(stop_event: threading.Event) -> None:
         clients = int(snap.get("ws_clients", 0))
         status_ok = bool(snap.get("status_ok", False))
         publish_interval_ms = int(snap.get("preview_publish_interval_ms", 0))
-        trading_day_boundary_utc = str(snap.get("trading_day_boundary_utc", "")) or "23:00"
+        calendar = _STATE.calendar
         if publish_interval_ms <= 0:
             publish_interval_ms = 1000
 
@@ -729,7 +729,9 @@ async def _log_state(stop_event: threading.Event) -> None:
                 open_ms_int = int(open_ms)
             except Exception:
                 continue
-            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, trading_day_boundary_utc)
+            if calendar is None and str(tf_key) == "1d":
+                continue
+            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, calendar)
             delay_bars = max(0, int((expected_ms - open_ms_int) // tf_ms))
             if delay_bars >= stale_delay_bars:
                 stale_delay_bars = delay_bars
@@ -878,7 +880,9 @@ async def _log_state(stop_event: threading.Event) -> None:
                     open_ms_int = int(open_ms)
                 except Exception:
                     continue
-                expected_ms = get_bucket_open_ms(str(tf_key), now_ms, trading_day_boundary_utc)
+                    if calendar is None and str(tf_key) == "1d":
+                        continue
+                    expected_ms = get_bucket_open_ms(str(tf_key), now_ms, calendar)
                 delay_bars = max(0, int((expected_ms - open_ms_int) // tf_ms))
                 if delay_bars > 0:
                     if open_ms_int <= 0:
@@ -897,11 +901,7 @@ async def _log_state(stop_event: threading.Event) -> None:
             market = market_raw if isinstance(market_raw, dict) else {}
             calendar_tag = str(market.get("calendar_tag", ""))
             if calendar_tag:
-                log.debug(
-                    "calendar_tag=%s trading_day_boundary_utc=%s",
-                    calendar_tag,
-                    trading_day_boundary_utc,
-                )
+                log.debug("calendar_tag=%s", calendar_tag)
             last_summary_meta_ms = now_ms
 
         last_log_ms = now_ms
@@ -926,7 +926,7 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
     with _STATE.lock:
         _STATE.subscribed_channel = config.ch_ohlcv()
         _STATE.preview_publish_interval_ms = int(config.ohlcv_preview_publish_interval_ms)
-        _STATE.trading_day_boundary_utc = str(config.trading_day_boundary_utc)
+        _STATE.calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     log.debug("UI Lite startup: redis_channel=%s", config.ch_ohlcv())
     _start_redis_subscriber(
         redis_client,

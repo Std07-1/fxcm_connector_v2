@@ -4,7 +4,7 @@ import importlib
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
+from typing import Any, Dict, List, Mapping, Optional, cast
 
 
 @dataclass(frozen=True)
@@ -45,8 +45,7 @@ class Config:
     history_provider_kind: str = "fxcm_forexconnect"  # fxcm_forexconnect | none
 
     calendar_tag: str = "fxcm_calendar_v1_ny"
-    trading_day_boundary_utc: str = "23:00"
-    closed_intervals_utc: List[Tuple[int, int]] = field(default_factory=list)
+    calendar_path: str = "config/calendar_overrides.json"
 
     max_bars_per_message: int = 512  # макс барів в одному повідомленні OHLCV
 
@@ -93,7 +92,7 @@ class Config:
     ui_lite_host: str = "127.0.0.1"
     ui_lite_port: int = 8089
 
-    tick_mode: str = "off"
+    tick_mode: str = "fxcm"  # off | fxcm | sim | replay
     tick_symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
     tick_sim_interval_ms: int = 500  # інтервал симуляції тіків у ms
     tick_sim_bid: float = 2000.0

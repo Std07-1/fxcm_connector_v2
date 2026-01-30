@@ -5,6 +5,7 @@ from typing import Tuple
 
 from config.config import Config
 from core.time.buckets import get_bucket_close_ms, get_bucket_open_ms
+from core.time.calendar import Calendar
 from runtime.preview_builder import OhlcvCache, PreviewBuilder
 
 
@@ -20,9 +21,10 @@ def _assert_eq(actual: int, expected: int, label: str) -> None:
 
 def run() -> Tuple[bool, str]:
     try:
-        config_1d = Config(trading_day_boundary_utc="22:00", ohlcv_preview_tfs=["1d"], ohlcv_preview_enabled=True)
+        config_1d = Config(ohlcv_preview_tfs=["1d"], ohlcv_preview_enabled=True)
+        calendar_1d = Calendar(calendar_tag=config_1d.calendar_tag, overrides_path=config_1d.calendar_path)
         cache_1d = OhlcvCache()
-        builder_1d = PreviewBuilder(config=config_1d, cache=cache_1d)
+        builder_1d = PreviewBuilder(config=config_1d, cache=cache_1d, calendar=calendar_1d)
 
         boundary_ms = _utc_ms(2026, 1, 2, 22, 0, 0)
         ts_before = boundary_ms - 1_000
@@ -35,10 +37,10 @@ def run() -> Tuple[bool, str]:
         if len(bars_1d) != 2:
             return False, "FAIL: очікувалось 2 1d bars у preview"
 
-        expected_open_before = get_bucket_open_ms("1d", ts_before, config_1d.trading_day_boundary_utc)
-        expected_close_before = get_bucket_close_ms("1d", expected_open_before, config_1d.trading_day_boundary_utc)
-        expected_open_after = get_bucket_open_ms("1d", ts_after, config_1d.trading_day_boundary_utc)
-        expected_close_after = get_bucket_close_ms("1d", expected_open_after, config_1d.trading_day_boundary_utc)
+        expected_open_before = get_bucket_open_ms("1d", ts_before, calendar_1d)
+        expected_close_before = get_bucket_close_ms("1d", expected_open_before, calendar_1d)
+        expected_open_after = get_bucket_open_ms("1d", ts_after, calendar_1d)
+        expected_close_after = get_bucket_close_ms("1d", expected_open_after, calendar_1d)
 
         _assert_eq(int(bars_1d[0]["open_time"]), expected_open_before, "1d open_time до boundary")
         _assert_eq(int(bars_1d[0]["close_time"]), expected_close_before, "1d close_time до boundary")
@@ -55,8 +57,8 @@ def run() -> Tuple[bool, str]:
         if len(bars_15m) != 1:
             return False, "FAIL: очікувалось 1 15m bar у preview"
 
-        expected_open_15m = get_bucket_open_ms("15m", ts_mid, config_15m.trading_day_boundary_utc)
-        expected_close_15m = get_bucket_close_ms("15m", expected_open_15m, config_15m.trading_day_boundary_utc)
+        expected_open_15m = get_bucket_open_ms("15m", ts_mid, None)
+        expected_close_15m = get_bucket_close_ms("15m", expected_open_15m, None)
 
         _assert_eq(int(bars_15m[0]["open_time"]), expected_open_15m, "15m open_time")
         _assert_eq(int(bars_15m[0]["close_time"]), expected_close_15m, "15m close_time")

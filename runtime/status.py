@@ -703,10 +703,6 @@ class StatusManager:
         if self.metrics is not None:
             self.metrics.fxcm_contract_reject_total.inc()
 
-    def record_fxcm_tick_drop(self, reason: str) -> None:
-        if self.metrics is not None:
-            self.metrics.fxcm_ticks_dropped_total.labels(reason=str(reason)).inc()
-
     def record_ohlcv_publish(self, tf: str, bar_open_time_ms: int, publish_ts_ms: int) -> None:
         preview = self._snapshot.get("ohlcv_preview")
         if not isinstance(preview, dict):

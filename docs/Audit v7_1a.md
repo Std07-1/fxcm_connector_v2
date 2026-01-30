@@ -26,11 +26,11 @@
 
 ---
 
-## Фаза 1 — прибрати “calendar_stub” і зробити календар прод‑придатним
+## Фаза 1 — прибрати stub‑календар і зробити календар прод‑придатним
 
 ### P7 – Calendar SSOT: real schedule + closed intervals + drift‑gates**
 
-* **Мета:** Замінити `calendar_stub` реальним календарем:
+* **Мета:** Замінити stub‑календар реальним календарем:
 
   * Коректні `is_open`, `next_open_utc`, `next_pause_utc`.
   * `closed_intervals` беруться з SSOT (JSON).
@@ -44,7 +44,7 @@
   * Без silent fallback: якщо календар невалідний → errors[]+degraded[] або hard‑fail.
 * **Acceptance Criteria:**
 
-  * `status.snapshot.degraded` НЕ містить `calendar_stub`.
+  * `status.snapshot.degraded` НЕ містить legacy‑stub тегів.
   * `gate_closed_intervals` → OK.
   * `gate_schedule_drift` → OK.
 * **Proof‑pack:**
@@ -64,7 +64,7 @@
   * Стабільний логін і reconnect/backoff.
   * Heartbeat/lag у статусі.
   * Помилки (bad credentials, session drop, timeout) → гучно в errors[], зі статусом і метриками.
-* **Scope:** `runtime/tick_feed.py`, `forexconnect_stream.py`, `runtime/status.py`, `observability/metrics.py`, `config/config.py`, `tests/*`, `tools/exit_gates/gate_fxcm_tick_liveness.py`.
+* **Scope:** `runtime/tick_feed.py`, `runtime/forexconnect_stream.py`, `runtime/fxcm_forexconnect.py`, `runtime/status.py`, `observability/metrics.py`, `config/config.py`, `tests/*`, `tools/exit_gates/gates/gate_fxcm_tick_liveness.py`.
 * **Non‑goals:** provider history, store final, derived, UI.
 * **Інваріанти/рейки:**
 
@@ -93,7 +93,7 @@
   * Бюджет/таймаут на одну команду.
   * Retry/backoff на transient errors.
   * Детермінованість: один і той же інтервал → однаковий результат.
-* **Scope:** `runtime/history_fxcm_provider.py`, `runtime/history_provider.py`, `runtime/warmup.py`, `runtime/backfill.py`, `store/file_cache.py` (або FileCache module), `tests/*`, `tools/exit_gates/gate_fxcm_history_smoke.py`.
+* **Scope:** `runtime/fxcm/history_provider.py`, `runtime/history_provider.py`, `runtime/warmup.py`, `runtime/backfill.py`, `store/file_cache.py` (або FileCache module), `tests/*`, `tools/exit_gates/gates/gate_fxcm_history_smoke.py`.
 * **Non‑goals:** stream→bar builder (це наступний slice), UI.
 * **Інваріанти/рейки:**
 
@@ -121,7 +121,7 @@
   * Preview: `complete=false`, часті оновлення дозволені.
   * Final: на закритті 1m — запис у FileCache як SSOT final + публікація у {NS}:ohlcv.
   * Market‑aware: не генерувати бари у `closed_intervals` або коли ринок закритий.
-* **Scope:** новий модуль `runtime/live_bar_builder.py` (або розширення preview builder), `store/file_cache.py`, `runtime/publisher.py`, `runtime/status.py`, `tools/exit_gates/gate_live_final_invariants.py`, `tests/*`.
+* **Scope:** `core/market/preview_builder.py`, `app/composition.py`, `store/file_cache.py`, `runtime/publisher.py`, `runtime/status.py`, `runtime/tail_guard.py`, `runtime/repair.py`, `tests/*`, `tools/exit_gates/gates/gate_live_final_invariants.py` (план/створити).
 * **Non‑goals:** HTF derived (вже є), recovery старих періодів.
 * **Інваріанти/рейки:**
 

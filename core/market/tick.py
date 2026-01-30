@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core.validation.validator import MAX_EPOCH_MS, ContractError
+from core.time.epoch_rails import MAX_EPOCH_MS
+from core.validation.errors import ContractError
 
 
 @dataclass(frozen=True)

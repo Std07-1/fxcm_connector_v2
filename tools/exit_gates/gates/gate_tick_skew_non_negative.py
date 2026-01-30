@@ -23,7 +23,7 @@ class _DummyRedis:
 def run() -> Tuple[bool, str]:
     root_dir = Path(__file__).resolve().parents[3]
     config = Config()
-    calendar = Calendar([], config.calendar_tag)
+    calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     validator = SchemaValidator(root_dir=root_dir)
     publisher = RedisPublisher(_DummyRedis(), config)
     status = StatusManager(

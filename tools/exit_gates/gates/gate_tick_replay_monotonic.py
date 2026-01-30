@@ -16,7 +16,7 @@ def run() -> Tuple[bool, str]:
 
     root_dir = repo_root()
     validator = SchemaValidator(root_dir=root_dir)
-    calendar = Calendar([], "fxcm_calendar_v1_ny")
+    calendar = Calendar(calendar_tag="fxcm_calendar_v1_ny")
     policy = TickReplayPolicy(calendar=calendar, validator=validator)
     try:
         count = validate_jsonl(Path(path), policy)
