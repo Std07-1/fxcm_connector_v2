@@ -45,7 +45,9 @@ Handlers визначені у composition root (app/main.py#L252-L265):
 ## Статус і метрики
 Status snapshot включає: process/market/errors/degraded/price/ohlcv/derived/tail_guard/republish (runtime/status.py#L32-L144).
 - **errors[]** — loud помилки (runtime/command_bus.py#L86-L159).
-- **degraded** — зокрема calendar_stub (runtime/status.py#L45-L120; core/time/calendar.py#L24-L38).
+- **degraded** — зокрема `calendar_error` при ініціалізаційній помилці календаря (runtime/status.py#L45-L120; core/time/calendar.py#L24-L38).
+- Публікація status регулюється `status_publish_period_ms` (app/main.py#L252-L358; config/config.py#L66-L75).
+- Якщо snapshot перевищує ліміт — публікується компактний payload (runtime/status.py#L300-L410).
 - Метрики піднімаються через Prometheus (app/main.py#L53-L79; observability/metrics.py#L41-L105).
 
 ## Preview pipeline

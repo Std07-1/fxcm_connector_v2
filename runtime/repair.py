@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -8,7 +9,7 @@ from config.config import Config
 from core.time.calendar import Calendar
 from observability.metrics import Metrics
 from runtime.fxcm.history_budget import HistoryBudget, build_history_budget
-from runtime.fxcm.history_provider import FxcmHistoryProvider
+from runtime.fxcm.history_provider import FxcmForexConnectHistoryAdapter, FxcmHistoryProvider
 from runtime.history_provider import HistoryProvider, guard_history_ready
 from runtime.status import StatusManager
 from store.file_cache import FileCache
@@ -32,9 +33,12 @@ def repair_missing_1m(
     max_gap_minutes: int,
     history_budget: Optional[HistoryBudget] = None,
 ) -> RepairSummary:
+    log = logging.getLogger("repair")
     total_missing = 0
     total_chunks = 0
     now_ms = int(time.time() * 1000)
+    if isinstance(provider, FxcmHistoryProvider) and isinstance(provider.adapter, FxcmForexConnectHistoryAdapter):
+        log.info("FXCM login component=history reason=tail_guard symbol=%s", symbol)
     guard_history_ready(
         provider=provider,
         calendar=calendar,

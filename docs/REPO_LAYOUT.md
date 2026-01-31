@@ -7,11 +7,12 @@
 - **runtime/** — виконання: HTTP API, command bus, tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
 - **observability/** — метрики/Prometheus.
 - **store/** — FileCache (CSV + meta.json) як SSOT (єдина персистентність).
-- **ui_lite/** — єдина канонічна UI (static + debug endpoint).
+- **ui_lite/** — єдина канонічна UI (static + debug endpoint); health враховує market closed і heartbeat cadence.
 - **tests/** — unit/contract/gate тести; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
 - **docs/** — SSOT документація/аудити/правила.
-- **data/**, **reports/**, **recordings/** — артефакти запусків, аудитів, записані ticks.
+- **data/**, **reports/** — артефакти запусків і аудитів.
+- **History/** — локальні історичні файли/артефакти (legacy).
 
 ## Public boundary (SSOT)
 - **core/contracts/public/** — публічні JSON Schema (commands/status/tick/ohlcv). Це єдиний контракт для wire‑payloads.
@@ -53,8 +54,10 @@
 |   |   |-- closed_intervals.py         # rails/нормалізація closed_intervals_utc
 |   |   |-- sessions.py                 # обчислення сесій
 |   |   |-- buckets.py                  # TF buckets
+|   |   |-- epoch_rails.py               # epoch rails (min/max)
 |   |   `-- timestamps.py               # timestamp rails
 |   `-- validation/                    # валідатори контрактів
+|       |-- errors.py                  # ContractError (SSOT)
 |       `-- validator.py               # schema + rails
 |-- data/                              # локальні артефакти/бази/аудити
 |   `-- audit_*/                        # audit snapshots та логи
@@ -69,20 +72,20 @@
 |   |-- evidence/                      # архів доказів/вхідних даних
 |   `-- ...                            # решта аудитів/специфікацій
 |-- fxcm/                              # FXCM історичні провайдери/стаби
-|   `-- history_fxcm_provider.py       # скелет провайдера FXCM історії
+|   `-- history_fxcm_provider.py       # legacy/unused заглушка FXCM history
+|-- History/                           # legacy історичні артефакти (локальні)
 |-- observability/                     # метрики
 |   `-- metrics.py                     # Prometheus метрики (tick skew/drop)
-|-- recordings/                        # збережені записи ticks
-|   `-- ticks/                         # каталоги записаних ticks
 |-- reports/                           # результати gate/audit
 |   `-- exit_gates/                    # результати exit gates
 |-- runtime/                           # runtime виконання
 |   |-- http_server.py                 # HTTP API (/api/*, /chart stub)
-|   |-- status.py                      # status snapshot + tick event/snap/skew + coverage telemetry + market.tz_backend
+|   |-- status.py                      # status snapshot + adaptive pubsub (compact on overflow) + telemetry
 |   |-- command_bus.py                 # обробка команд
 |   |-- tick_feed.py                   # tick feed: FxcmForexConnectStream → TickPublisher → Redis
 |   |-- replay_ticks.py                # replay ingest (REAL‑only)
-|   |-- fxcm_forexconnect.py           # FXCM інтеграція (tick_ts=event_ts, snap_ts=receipt_ts)
+|   |-- forexconnect_stream.py         # FXCM stream wrapper
+|   |-- fxcm_forexconnect.py           # FXCM інтеграція (tick_ts=event_ts, snap_ts=receipt_ts, market-closed pause)
 |   |-- handlers_p3.py                 # командні handler'и P3
 |   |-- handlers_p4.py                 # handler'и P4
 |   |-- ohlcv_preview.py               # preview обгортка
@@ -99,6 +102,7 @@
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
 |       |-- tick_liveness.py           # liveness + debounce для stale_no_ticks
+|       |-- history_provider.py        # реальний FXCM history provider
 |       `-- ...
 |-- store/                             # FileCache SSOT (CSV + meta)
 |   `-- file_cache/                    # FileCache (CSV + meta.json)
@@ -124,13 +128,14 @@
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
 |           |-- gate_fxcm_tick_mode_config.py # rail: tick_mode=fxcm → fxcm_backend=forexconnect
 |           |-- gate_fxcm_tick_liveness.py # rail: liveness debounce (cooldown)
+|           |-- gate_fxcm_market_closed_uses_calendar.py # rail: market-closed через Calendar SSOT
 |           |-- gate_calendar_schedule_drift.py # rail: schedule drift (daily break + weekly boundary)
 |           |-- gate_calendar_closed_intervals.py # rail: валідація closed_intervals_utc
 |           |-- gate_file_cache_schema.py # rail: file cache schema/semantics
 |           |-- gate_cache_integrity.py   # rail: FileCache integrity
 |           |-- gate_no_sqlite_left.py    # rail: відсутність sqlite-маркерів
 |-- ui_lite/                           # канонічна UI. “oscilloscope” для конектора
-|   |-- server.py                      # UI Lite HTTP + /debug + inbound OHLCV/status validation + health WS (N/A/STALE)
+|   |-- server.py                      # UI Lite HTTP + /debug + health WS (market-aware stale/grace)
 |   `-- static/                        # UI Lite static assets
 |-- Work/                              # робочий журнал (SSOT)
 |   `-- 01log.md                       # append‑only work log

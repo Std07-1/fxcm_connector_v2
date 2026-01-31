@@ -155,8 +155,8 @@ Gate `gate_calendar_holiday_policy` тут виконує **структурну
 
 ### Документація потребує синхронізації
 
-- `docs/calendar_sessions_spec.md` має застарілий TODO про holiday‑інтервали для utc_overrides.
-- `docs/audit_v7_runtime_core.md` досі описує `closed_intervals_utc` як порожні.
+- `docs/calendar_sessions_spec.md` має TODO про holiday‑інтервали для `fxcm_calendar_v1_utc_overrides` (перевірити актуальність і наповнення).
+- `docs/audit_v7_runtime_core.md` потребує узгодження формулювань із фактичними SSOT даними (closed_intervals уже наповнені).
 
 ### Продуктивність `closed_intervals_utc` зараз O(n) на кожен `is_open`
 

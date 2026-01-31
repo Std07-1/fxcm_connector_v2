@@ -64,7 +64,6 @@ def build_status_pubsub_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "fxcm",
         "history",
         "ohlcv_preview",
-        "ohlcv_final_1m",
         "ohlcv_final",
         "no_mix",
         "tail_guard",
@@ -808,6 +807,7 @@ class StatusManager:
                     "1d": 0,
                 },
             }
+        prev_late_total = int(preview.get("late_ticks_dropped_total", 0))
         preview["last_tick_ts_ms"] = int(last_tick_ts_ms)
         preview["last_bucket_open_ms"] = int(last_bucket_open_ms)
         preview["late_ticks_dropped_total"] = int(late_ticks_dropped_total)
@@ -822,6 +822,10 @@ class StatusManager:
         if isinstance(tf, str) and tf in preview.get("last_bar_open_time_ms", {}):
             preview["last_bar_open_time_ms"][tf] = int(preview.get("last_bar_open_time_ms", {}).get(tf, 0))
         self._snapshot["ohlcv_preview"] = preview
+        if self.metrics is not None:
+            delta = int(late_ticks_dropped_total) - prev_late_total
+            if delta > 0:
+                self.metrics.ohlcv_preview_late_ticks_dropped_total.labels(tf=str(tf)).inc(delta)
 
     def record_final_publish(
         self,
@@ -1171,17 +1175,73 @@ class StatusManager:
         payload = json.dumps(payload_obj, ensure_ascii=False, separators=(",", ":"))
         payload_size = len(payload.encode("utf-8"))
         if payload_size > STATUS_PUBSUB_MAX_BYTES:
-            self.append_error(
-                code="status_payload_too_large",
-                severity="error",
-                message="Payload status pubsub перевищує 8KB",
-                context={"size_bytes": payload_size},
-            )
+            errors = self._snapshot.get("errors")
+            if isinstance(errors, list) and errors:
+                last = errors[-1]
+                if isinstance(last, dict) and last.get("code") == "status_payload_too_large":
+                    context_obj = last.get("context")
+                    context: Dict[str, Any] = dict(context_obj) if isinstance(context_obj, dict) else {}
+                    prev_count = int(context.get("count", 1))
+                    context["size_bytes"] = payload_size
+                    context["count"] = prev_count + 1
+                    last["context"] = context
+                    last["ts"] = _now_ms()
+                    errors[-1] = last
+                    self._snapshot["errors"] = errors
+                else:
+                    self.append_error(
+                        code="status_payload_too_large",
+                        severity="error",
+                        message="Payload status pubsub перевищує 8KB",
+                        context={"size_bytes": payload_size},
+                    )
+            else:
+                self.append_error(
+                    code="status_payload_too_large",
+                    severity="error",
+                    message="Payload status pubsub перевищує 8KB",
+                    context={"size_bytes": payload_size},
+                )
             if self.metrics is not None:
                 self.metrics.status_payload_too_large_total.inc()
             compact_after_error = build_status_pubsub_payload(self._snapshot)
-            compact_json = json.dumps(compact_after_error, ensure_ascii=False, separators=(",", ":"))
+
+            def _payload_size_bytes(obj: Dict[str, Any]) -> int:
+                data = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+                return len(data.encode("utf-8"))
+
+            compact_obj = dict(compact_after_error)
+            compact_size = _payload_size_bytes(compact_obj)
+            if compact_size > STATUS_PUBSUB_MAX_BYTES:
+                compact_obj.pop("tail_guard", None)
+                compact_size = _payload_size_bytes(compact_obj)
+            if compact_size > STATUS_PUBSUB_MAX_BYTES:
+                compact_obj.pop("ohlcv_final", None)
+                compact_obj.pop("ohlcv_final_1m", None)
+                compact_size = _payload_size_bytes(compact_obj)
+            if compact_size > STATUS_PUBSUB_MAX_BYTES:
+                errors = compact_obj.get("errors")
+                if isinstance(errors, list):
+                    deduped: List[Dict[str, Any]] = []
+                    seen_codes: set = set()
+                    for entry in errors:
+                        if not isinstance(entry, dict):
+                            continue
+                        code = entry.get("code")
+                        if not code or code in seen_codes:
+                            continue
+                        seen_codes.add(code)
+                        deduped.append(entry)
+                        if len(deduped) >= 5:
+                            break
+                    compact_obj["errors"] = deduped
+            self.validator.validate_status_v2(compact_obj)
+            compact_json = json.dumps(compact_obj, ensure_ascii=False, separators=(",", ":"))
             self.publisher.set_snapshot(self.config.key_status_snapshot(), compact_json)
+            self.publisher.publish(self.config.ch_status(), compact_json)
+            self._last_publish_ms = ts_ms
+            if self.metrics is not None:
+                self.metrics.last_status_ts_ms.set(ts_ms)
             return
         self.publisher.set_snapshot(self.config.key_status_snapshot(), payload)
         self.publisher.publish(self.config.ch_status(), payload)

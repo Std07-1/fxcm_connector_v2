@@ -119,11 +119,14 @@ class PreviewBuilder:
                 self._sync_preview_rail(tf, state)
                 continue
             state = self._get_stream_state(symbol, tf)
-            state.last_tick_ts_ms = int(tick_ts_ms)
-            state.last_bucket_open_ms = int(bucket_start)
             if state.current_bucket_open_ms is None:
                 state.current_bucket_open_ms = int(bucket_start)
-            if int(bucket_start) < int(state.current_bucket_open_ms):
+            # Guardrail: tick_ts_ms може бути не монотонним у межах того ж bucket,
+            # тому дропаємо тільки якщо bucket_open_ms йде назад.
+            is_late_tick = False
+            if int(state.last_bucket_open_ms) and int(bucket_start) < int(state.last_bucket_open_ms):
+                is_late_tick = True
+            if is_late_tick:
                 state.late_ticks_dropped_total += 1
                 state.past_mutations_total += 1
                 state.last_late_tick = {
@@ -131,8 +134,20 @@ class PreviewBuilder:
                     "bucket_open_ms": int(bucket_start),
                     "current_bucket_open_ms": int(state.current_bucket_open_ms),
                 }
+                if self.status is not None:
+                    if hasattr(self.status, "append_error") and state.late_ticks_dropped_total == 1:
+                        self.status.append_error(
+                            code="ohlcv_preview_late_tick_dropped",
+                            severity="error",
+                            message="Preview late tick відкинуто (bucket_open_ms < watermark)",
+                            context=dict(state.last_late_tick),
+                        )
+                    if hasattr(self.status, "mark_degraded"):
+                        self.status.mark_degraded("ohlcv_preview_late_tick_dropped")
                 self._sync_preview_rail(tf, state)
                 continue
+            state.last_tick_ts_ms = int(tick_ts_ms)
+            state.last_bucket_open_ms = int(bucket_start)
             if tf == "1d":
                 if self.calendar is None:
                     raise ValueError("Calendar є обов'язковим для 1d boundary")

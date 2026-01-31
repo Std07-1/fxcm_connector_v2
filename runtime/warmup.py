@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable, List, Optional
 
 from config.config import Config
 from observability.metrics import Metrics
+from runtime.fxcm.history_provider import FxcmForexConnectHistoryAdapter, FxcmHistoryProvider
 from runtime.history_provider import HistoryProvider, guard_history_ready
 from runtime.status import StatusManager
 from store.file_cache import FileCache
@@ -20,6 +22,7 @@ def run_warmup(
     lookback_days: int,
     publish_callback: Optional[Callable[[str], None]],
 ) -> None:
+    log = logging.getLogger("warmup")
     real_now_ms = int(time.time() * 1000)
     end_close_ms = real_now_ms - (real_now_ms % 60_000) - 1
     now_ms = end_close_ms
@@ -28,6 +31,8 @@ def run_warmup(
     limit = config.history_chunk_limit
 
     for symbol in symbols:
+        if isinstance(provider, FxcmHistoryProvider) and isinstance(provider.adapter, FxcmForexConnectHistoryAdapter):
+            log.info("FXCM login component=history reason=warmup symbol=%s", symbol)
         guard_history_ready(
             provider=provider,
             calendar=status.calendar,

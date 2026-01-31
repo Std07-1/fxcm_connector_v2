@@ -49,7 +49,7 @@
 
 ## 4) Технічний борг
 
-- **Calendar closed_intervals_utc**: зараз порожні; якщо потрібна точна відповідність v1 — необхідне заповнення даних (не логіки).
+- **Calendar closed_intervals_utc**: наповнені в SSOT (`config/calendar_overrides.json`); актуальність/повнота даних має бути регулярною операційною задачею.
 - **Calendar overrides з v1 (корисні правила)**:
  	- v1 використовував UTC‑оверрайди (daily break 22:00–23:01 UTC, weekly open 23:01 UTC, weekly close 21:45 UTC) та explicit closed_intervals_utc.
  	- v1 мав список FXCM holidays (UTC дати) як SSOT дані, що впливають на `is_trading_time`.
@@ -87,7 +87,7 @@
 
 1) **FXCM history 0 bars** → warmup/backfill не наповнюють 1m store.
 2) **Data drift через environment** → без стабільного профілю секретів/SDK може бути часткова працездатність.
-3) **Calendar data gap** → closed_intervals_utc порожні (ризик розбіжності з прод‑календарем).
+3) **Calendar data gap** → ризик виникає при застарілих або неповних `closed_intervals_utc` у SSOT.
 4) **Calendar schedule drift** → v1 UTC‑оверрайди не перенесені; ризик різних weekly open/close і daily break у проді.
 
 ---
@@ -95,7 +95,7 @@
 ## 9) Рекомендації (пріоритет)
 
 1) **History provider**: підтвердити реальний потік історії (параметри FXCM) або зафіксувати ліміт/режим деградації.
-2) **Calendar data**: наповнити closed_intervals_utc SSOT даними (без зміни логіки).
+2) **Calendar data**: підтримувати актуальність `closed_intervals_utc` в SSOT, без зміни логіки календаря.
 2.1) **Calendar schedule**: узгодити, чи переносимо v1 UTC‑оверрайди (weekly open/close, daily break) у профілі, або залишаємо NY‑локальні правила. Рішення має бути як дані в config/calendar_overrides.json.
 3) **Warmup/backfill SOP**: додати runbook для обов’язкового 1m seed перед derived rebuild.
 4) **Fixtures discipline**: автоматичний sanity‑check fixtures у bootstrap (перед pytest).

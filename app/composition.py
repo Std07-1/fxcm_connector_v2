@@ -585,30 +585,47 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                         stale_delay_bars = 0
                         parts = []
                         top_delay_parts = []
+                        market_open = True
+                        if calendar is not None:
+                            market_open = bool(calendar.is_open(now_ms))
                         for tf_key, count in sorted(ohlcv_publish_counts_by_tf.items()):
                             tf_ms = TF_TO_MS.get(str(tf_key))
                             if tf_ms is None:
                                 continue
                             last_open_ms = int(ohlcv_last_open_by_tf.get(tf_key, 0))
                             expected_ms = get_bucket_open_ms(str(tf_key), now_ms, calendar)
-                            delay_bars = max(0, int((expected_ms - last_open_ms) // tf_ms))
-                            if delay_bars >= stale_delay_bars:
-                                stale_delay_bars = delay_bars
-                                stale_tf = str(tf_key)
-                            if delay_bars > 0:
-                                top_delay_parts.append(f"{tf_key}:delay={delay_bars}")
+                            delay_bars = 0
+                            if market_open:
+                                grace_ms = 0
+                                if str(tf_key) == "1m":
+                                    grace_ms = 5_000
+                                elif str(tf_key) == "15m":
+                                    grace_ms = 60_000
+                                expected_for_delay = int(expected_ms)
+                                if grace_ms > 0 and now_ms - int(expected_ms) <= grace_ms:
+                                    expected_for_delay = int(expected_ms) - int(tf_ms)
+                                delay_bars = max(0, int((expected_for_delay - last_open_ms) // tf_ms))
+                                if delay_bars >= stale_delay_bars:
+                                    stale_delay_bars = delay_bars
+                                    stale_tf = str(tf_key)
+                                if delay_bars > 0:
+                                    top_delay_parts.append(f"{tf_key}:delay={delay_bars}")
                             prev_open_ms = int(ohlcv_prev_open_by_tf.get(tf_key, 0))
                             step_ms = (last_open_ms - prev_open_ms) if prev_open_ms > 0 else 0
                             parts.append(
                                 "{tf} last={last} expected={expected} delay={delay} step={step}s".format(
                                     tf=tf_key,
                                     last=_to_utc_iso(last_open_ms) if last_open_ms > 0 else "-",
-                                    expected=_to_utc_iso(int(expected_ms)) if int(expected_ms) > 0 else "-",
+                                    expected=_to_utc_iso(int(expected_ms))
+                                    if (market_open and int(expected_ms) > 0)
+                                    else "-",
                                     delay=delay_bars,
                                     step=int(step_ms / 1000) if step_ms > 0 else 0,
                                 )
                             )
-                        needs_summary = rails_changed or (ohlcv_age_s is not None and ohlcv_age_s > 15.0)
+                        needs_summary = rails_changed or (
+                            market_open and ohlcv_age_s is not None and ohlcv_age_s > 15.0
+                        )
                         if stale_delay_bars > 0:
                             needs_summary = True
                         if parts and needs_summary:

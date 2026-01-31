@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -87,6 +88,9 @@ class Config:
     ohlcv_channel: str = ""
     heartbeat_channel: str = ""
     command_bus_heartbeat_period_s: int = 2
+
+    status_publish_period_ms: int = 1000
+    status_fresh_warn_ms: int = 3000
 
     ui_lite_enabled: bool = True  # чи увімкнено UI Lite
     ui_lite_host: str = "127.0.0.1"
@@ -247,6 +251,7 @@ def load_config(profile: Optional[str] = None) -> Config:
         fxcm_username=os.environ.get("FXCM_USERNAME", base.fxcm_username),
         fxcm_password=os.environ.get("FXCM_PASSWORD", base.fxcm_password),
     )
+    _validate_status_cadence(cfg)
     if cfg.redis_required and not cfg.redis_password and not cfg.redis_url:
         raise ValueError("FXCM_REDIS_REQUIRED=true, але redis_password/redis_url не задані")
     if cfg.cache_enabled:
@@ -262,3 +267,14 @@ def load_config(profile: Optional[str] = None) -> Config:
         except Exception as exc:  # noqa: BLE001
             raise ValueError("cache_root не writable") from exc
     return cfg
+
+
+def _validate_status_cadence(cfg: Config) -> None:
+    if cfg.status_publish_period_ms <= 0:
+        raise ValueError("status_publish_period_ms має бути > 0")
+    if cfg.status_fresh_warn_ms < cfg.status_publish_period_ms:
+        raise ValueError("status_fresh_warn_ms має бути >= status_publish_period_ms")
+    if cfg.status_fresh_warn_ms < cfg.status_publish_period_ms * 2:
+        logging.getLogger("config").warning(
+            "status_fresh_warn_ms < 2*status_publish_period_ms: можливі WARN через джиттер/GC/IO"
+        )

@@ -10,7 +10,10 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - **Live preview OHLCV** (1m + HTF) з жорсткими рейками часу/сортування/дедуп.
 - **SSOT final 1m** у FileCache (CSV + meta.json) з інваріантами.
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
-- **UI Lite** як канонічна UI (HTTP + WS + /debug, health/STALE/overlay).
+- **Status pubsub** — degraded‑but‑loud: при overflow публікується compact payload.
+- **Status heartbeat** — cadence керується SSOT: `status_publish_period_ms`, `status_fresh_warn_ms`.
+- **UI Lite** як канонічна UI (HTTP + WS + /debug, health/STALE/overlay, market‑aware grace).
+- **Market closed** — ohlcv/payload можуть бути “-”, health не трактує це як lag (крім heartbeat > 10×period).
 - **Exit gates** як SSOT контроль якості (tools/run_exit_gates.py).
 - **FXCM tick feed (real)**: tick_mode=fxcm → FxcmForexConnectStream → TickPublisher → validate_tick_v1 → Redis, з liveness/debounce.
 
@@ -18,7 +21,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 
 ### Redis
 - **Snapshot**: {NS}:status:snapshot (JSON, валідний status_v2).
-- **Pub/Sub**: {NS}:status, {NS}:ohlcv, {NS}:price_tik.
+- **Pub/Sub**: {NS}:status, {NS}:ohlcv, {NS}:price_tik (status може бути compact при overflow).
 - **Commands**: {NS}:commands (commands_v1).
 
 ### HTTP
@@ -82,7 +85,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 ## Конфіг
 
 - config/config.py — SSOT для каналів/портів/таймфреймів/rails.
-- config/calendar_overrides.json — SSOT календар (NY recurrence + профілі, XAU 23:00 UTC).
+- config/calendar_overrides.json — SSOT календар (NY recurrence + профілі, XAU 23:01 UTC).
 - docs/Public API Spec (SSOT).md — нормативні правила Public API.
 
 ## Поточна карта REPO_LAYOUT (актуальна)
@@ -100,7 +103,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 - **tests/** — unit/contract/gate тести; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
 - **docs/** — SSOT документація/аудити/правила.
-- **data/**, **reports/**, **recordings/** — артефакти запусків, аудитів, записані ticks.
+- **data/**, **reports/** — артефакти запусків і аудитів.
 
 ### Annotated tree (ASCII)
 
@@ -114,7 +117,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   `-- composition.py                 # складання всіх компонентів runtime
 |-- config/                            # SSOT конфіг
 |   |-- config.py                      # основний конфіг та канали (history_provider_kind)
-|   |-- calendar_overrides.json        # SSOT календар (NY recurrence + profiles, XAU 23:00 UTC)
+|   |-- calendar_overrides.json        # SSOT календар (NY recurrence + profiles, XAU 23:01 UTC)
 |   |-- profile_template.py            # шаблон профілю
 |   `-- secrets_template.py            # шаблон секретів
 |-- core/                              # доменна SSOT логіка
@@ -133,11 +136,14 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- runtime/                       # SSOT режим backend
 |   |   `-- mode.py                     # режими FOREXCONNECT/REPLAY/DISABLED
 |   |-- time/                          # SSOT час/календар
-|   |   |-- calendar.py                 # календар (NY recurrence + UTC overrides)
+|   |   |-- calendar.py                 # календар (loader overrides + rails)
+|   |   |-- closed_intervals.py         # rails/нормалізація closed_intervals_utc
 |   |   |-- sessions.py                 # обчислення сесій
 |   |   |-- buckets.py                  # TF buckets
+|   |   |-- epoch_rails.py              # epoch rails (min/max)
 |   |   `-- timestamps.py               # timestamp rails
 |   `-- validation/                    # валідатори контрактів
+|       |-- errors.py                  # ContractError (SSOT)
 |       `-- validator.py               # schema + rails
 |-- data/                              # локальні артефакти/бази/аудити
 |   `-- audit_*/                        # audit snapshots та логи
@@ -151,11 +157,10 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- audit_v6_public_surface.md     # аудит поверхні
 |   `-- ...                            # решта аудитів/специфікацій
 |-- fxcm/                              # FXCM історичні провайдери/стаби
-|   `-- history_fxcm_provider.py       # скелет провайдера FXCM історії
+|   `-- history_fxcm_provider.py       # legacy/unused заглушка FXCM history
+|-- History/                           # legacy історичні артефакти (локальні)
 |-- observability/                     # метрики
 |   `-- metrics.py                     # Prometheus метрики (tick skew/drop)
-|-- recordings/                        # збережені записи ticks
-|   `-- ticks/                         # каталоги записаних ticks
 |-- reports/                           # результати gate/audit
 |   `-- exit_gates/                    # результати exit gates
 |-- runtime/                           # runtime виконання
@@ -164,6 +169,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- command_bus.py                 # обробка команд
 |   |-- tick_feed.py                   # tick feed: FxcmForexConnectStream → TickPublisher → Redis
 |   |-- replay_ticks.py                # replay ingest (REAL‑only)
+|   |-- forexconnect_stream.py         # FXCM stream wrapper
 |   |-- fxcm_forexconnect.py           # FXCM інтеграція (tick_ts=event_ts, snap_ts=receipt_ts)
 |   |-- handlers_p3.py                 # командні handler'и P3
 |   |-- handlers_p4.py                 # handler'и P4
@@ -181,6 +187,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- static/                        # legacy static; /chart більше не читає ці файли
 |   `-- fxcm/                          # FXCM runtime модулі (adapter/fsm/session/history_budget)
 |       |-- tick_liveness.py           # liveness + debounce для stale_no_ticks
+|       |-- history_provider.py        # реальний FXCM history provider
 |       `-- ...
 |-- store/                             # FileCache SSOT
 |   `-- file_cache/                    # FileCache (CSV + meta.json)
@@ -189,6 +196,8 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   `-- test_*.py                      # тести на rails/контракти
 |-- tools/                             # операційні скрипти
 |   |-- run_exit_gates.py              # SSOT runner для exit gates
+|   |-- run_dev_checks.py              # runner для dev-checks (ruff/mypy/pytest)
+|   |-- migrate_v1_calendar_overrides.py # one-off міграція v1 календарних даних
 |   |-- validate_tick_fixtures.py      # валідація tick fixtures
 |   |-- capture_fxcm_ticks.py          # capture ticks (ops)
 |   |-- record_ticks.py                # запис ticks (ops)
@@ -200,6 +209,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |           |-- gate_tick_skew_non_negative.py  # rail: tick_skew_ms >= 0
 |           |-- gate_fxcm_tick_mode_config.py # rail: tick_mode=fxcm → fxcm_backend=forexconnect
 |           |-- gate_fxcm_tick_liveness.py # rail: liveness debounce (cooldown)
+|           |-- gate_fxcm_market_closed_uses_calendar.py # rail: market-closed через Calendar SSOT
 |-- ui_lite/                           # канонічна UI. “oscilloscope” для конектора
 |   |-- server.py                      # UI Lite HTTP + /debug + inbound OHLCV/status validation + health WS (N/A/STALE)
 |   `-- static/                        # UI Lite static assets

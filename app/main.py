@@ -71,12 +71,19 @@ def main() -> None:
     handles = build_runtime(config=config, fxcm_preview=args.fxcm_preview)
 
     log.info("Слухаю команди у %s", config.ch_commands())
+    stop_event = None
+    if handles.fxcm_handle is not None:
+        stop_event = handles.fxcm_handle.stop_event
     try:
         while True:
             if handles.replay_handle is not None and handles.replay_handle.error:
                 raise SystemExit(handles.replay_handle.error)
-            handles.status.publish_if_due(interval_ms=5000)
-            time.sleep(0.1)
+            handles.status.publish_if_due(interval_ms=int(handles.config.status_publish_period_ms))
+            if stop_event is not None:
+                if stop_event.wait(0.1):
+                    break
+            else:
+                time.sleep(0.1)
     except KeyboardInterrupt:
         log.info("Отримано KeyboardInterrupt — зупинка.")
     finally:

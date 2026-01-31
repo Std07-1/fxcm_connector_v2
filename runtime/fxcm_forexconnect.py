@@ -208,6 +208,25 @@ def _offer_row_to_tick(
 ) -> Optional[Tick]:
     instrument = getattr(row, "instrument", None)
     if not instrument:
+        try:
+            row_type = f"{type(row).__module__}.{type(row).__name__}"
+        except Exception:  # noqa: BLE001
+            row_type = "unknown"
+        try:
+            has_instrument_caps = bool(hasattr(row, "Instrument"))
+        except Exception:  # noqa: BLE001
+            has_instrument_caps = False
+        try:
+            attrs = [item for item in dir(row) if not item.startswith("__")]
+            attrs = attrs[:30]
+        except Exception:  # noqa: BLE001
+            attrs = []
+        log.warning(
+            "FXCM offers row без instrument: row_type=%s has_Instrument=%s attrs=%s",
+            row_type,
+            has_instrument_caps,
+            attrs,
+        )
         raise ContractError("instrument відсутній")
     symbol = normalize_symbol(str(instrument))
     if symbol not in allowed_symbols:
@@ -230,6 +249,18 @@ def _offer_row_to_tick(
             metrics.fxcm_ticks_dropped_total.labels(reason="missing_event_ts").inc()
         return None
     snap_ts_ms = int(receipt_ms)
+    if int(event_ts_ms) > int(snap_ts_ms):
+        status.append_error(
+            code="fxcm_tick_event_ahead_of_receipt",
+            severity="warning",
+            message="FXCM tick event_ts_ms > receipt_ms; snap_ts_ms нормалізовано",
+            context={
+                "symbol": symbol,
+                "tick_ts_ms": int(event_ts_ms),
+                "snap_ts_ms": int(snap_ts_ms),
+            },
+        )
+        snap_ts_ms = int(event_ts_ms)
     return normalize_tick(
         symbol=symbol,
         bid=float(bid),
@@ -308,11 +339,18 @@ class FXCMOfferSubscription:
                 if tick is None:
                     return
             except ContractError as exc:
+                message = str(exc)
+                context = {"source": "fxcm_offers"}
+                if message == "instrument відсутній":
+                    try:
+                        context["row_type"] = f"{type(row).__module__}.{type(row).__name__}"
+                    except Exception:  # noqa: BLE001
+                        context["row_type"] = "unknown"
                 self._status.append_error(
                     code="tick_contract_reject",
                     severity="error",
-                    message=str(exc),
-                    context={"source": "fxcm_offers"},
+                    message=message,
+                    context=context,
                 )
                 self._status.mark_degraded("tick_contract_reject")
                 self._status.record_tick_contract_reject()
@@ -392,6 +430,54 @@ class FxcmForexConnectStream:
             next_retry_ts_ms=0,
         )
 
+    def _calendar_next_open_ms(self, now_ms: int) -> int:
+        fallback_ms = int(now_ms + 60_000)
+        try:
+            next_open_ms_raw = self.status.calendar.next_open_ms(now_ms)
+        except Exception as exc:  # noqa: BLE001
+            self.status.append_error(
+                code="fxcm_calendar_next_open_invalid",
+                severity="error",
+                message=f"Calendar next_open_ms помилка: {exc}",
+                context={"now_ms": int(now_ms)},
+            )
+            self.status.mark_degraded("fxcm_calendar_next_open_invalid")
+            return fallback_ms
+        try:
+            next_open_ms = int(next_open_ms_raw)
+        except Exception as exc:  # noqa: BLE001
+            self.status.append_error(
+                code="fxcm_calendar_next_open_invalid",
+                severity="error",
+                message=f"Calendar next_open_ms не число: {exc}",
+                context={"now_ms": int(now_ms), "next_open_ms": next_open_ms_raw},
+            )
+            self.status.mark_degraded("fxcm_calendar_next_open_invalid")
+            return fallback_ms
+        if next_open_ms <= now_ms:
+            self.status.append_error(
+                code="fxcm_calendar_next_open_invalid",
+                severity="error",
+                message=("Calendar next_open_ms невалідний: " f"next_open_ms={next_open_ms} <= now_ms={now_ms}"),
+                context={"now_ms": int(now_ms), "next_open_ms": int(next_open_ms)},
+            )
+            self.status.mark_degraded("fxcm_calendar_next_open_invalid")
+            return fallback_ms
+        return next_open_ms
+
+    def _sleep_interruptible(self, sleep_ms: int, step_ms: int = 500) -> bool:
+        remaining_ms = max(0, int(sleep_ms))
+        step_ms = max(1, int(step_ms))
+        while remaining_ms > 0:
+            if self._stop_event.is_set():
+                return True
+            step = min(step_ms, remaining_ms)
+            self._stop_event.wait(step / 1000.0)
+            if self._stop_event.is_set():
+                return True
+            remaining_ms -= step
+        return False
+
     def _run(self) -> None:
         ForexConnect, err = _try_import_forexconnect()
         if ForexConnect is None:
@@ -427,6 +513,7 @@ class FxcmForexConnectStream:
             stale_s=int(self.config.fxcm_stale_s),
             cooldown_s=int(self.config.fxcm_reconnect_cooldown_s),
         )
+        login_reason = "startup"
         normalized_symbols = [normalize_symbol(s) for s in self.config.fxcm_symbols]
         denormalized_symbols = [denormalize_symbol(s) for s in self.config.fxcm_symbols]
         log.debug(
@@ -448,7 +535,7 @@ class FxcmForexConnectStream:
             now_ms = int(time.time() * 1000)
             if not self.status.calendar.is_open(now_ms):
                 self.status.clear_degraded("fxcm_stale_no_ticks")
-                next_open_ms = self.status.calendar.next_open_ms(now_ms)
+                next_open_ms = self._calendar_next_open_ms(now_ms)
                 reconnect_attempt += 1
                 backoff_s = _backoff_seconds(reconnect_attempt, cap=float(self.config.fxcm_reconnect_backoff_cap_s))
                 retry_ms = max(next_open_ms, int(now_ms + backoff_s * 1000))
@@ -462,10 +549,8 @@ class FxcmForexConnectStream:
                 )
                 self.status.publish_snapshot()
                 sleep_ms = max(1000, retry_ms - now_ms)
-                for _ in range(int(min(sleep_ms, 30_000) / 500)):
-                    if self._stop_event.is_set():
-                        return
-                    time.sleep(0.5)
+                if self._sleep_interruptible(min(sleep_ms, 30_000), step_ms=500):
+                    return
                 continue
 
             state = "connecting"
@@ -489,7 +574,12 @@ class FxcmForexConnectStream:
                     self.config.fxcm_host_url,
                     self.config.fxcm_username,
                 )
-                log.info("FXCM login: connection=%s host=%s", self.config.fxcm_connection, self.config.fxcm_host_url)
+                log.info(
+                    "FXCM login component=stream reason=%s connection=%s host=%s",
+                    login_reason,
+                    self.config.fxcm_connection,
+                    self.config.fxcm_host_url,
+                )
                 fx.login(
                     self.config.fxcm_username,
                     self.config.fxcm_password,
@@ -513,7 +603,7 @@ class FxcmForexConnectStream:
                     last_action=fsm.last_action,
                 )
                 self.status.publish_snapshot()
-                log.info("FXCM login успішний")
+                log.info("FXCM login успішний component=stream reason=%s", login_reason)
                 last_tick_ts_ms = 0
 
                 class _LiveAdapter(FxcmAdapter):
@@ -596,6 +686,26 @@ class FxcmForexConnectStream:
 
                 while not self._stop_event.is_set():
                     now_ms = int(time.time() * 1000)
+                    if not self.status.calendar.is_open(now_ms):
+                        self.status.clear_degraded("fxcm_stale_no_ticks")
+                        next_open_ms = self._calendar_next_open_ms(now_ms)
+                        retry_ms = max(next_open_ms, int(now_ms + 1000))
+                        self.status.update_fxcm_state(
+                            state="paused_market_closed",
+                            last_tick_ts_ms=last_tick_ts_ms,
+                            last_err=None,
+                            last_ok_ts_ms=last_ok_ts_ms,
+                            reconnect_attempt=reconnect_attempt,
+                            next_retry_ts_ms=retry_ms,
+                            fsm_state=fsm.state.value,
+                            stale_seconds=fsm.stale_seconds,
+                            last_action=fsm.last_action,
+                        )
+                        self.status.publish_snapshot()
+                        sleep_ms = max(1000, retry_ms - now_ms)
+                        if self._sleep_interruptible(min(sleep_ms, 30_000), step_ms=500):
+                            return
+                        break
                     decision = session.on_timer(now_ms) if session is not None else FxcmFsmDecision(action=None)
                     if decision.action == "resubscribe":
                         if not adapter.resubscribe_offers():
@@ -638,6 +748,7 @@ class FxcmForexConnectStream:
             except FxcmReconnectRequested as exc:
                 reconnect_attempt += 1
                 sleep_s = float(exc.backoff_s)
+                login_reason = exc.reason or "reconnect"
                 next_retry_ts_ms = int(time.time() * 1000 + sleep_s * 1000)
                 err_ts = int(time.time() * 1000)
                 self.status.append_error(
@@ -662,6 +773,7 @@ class FxcmForexConnectStream:
             except Exception as exc:  # noqa: BLE001
                 reconnect_attempt += 1
                 sleep_s = _backoff_seconds(reconnect_attempt, cap=float(self.config.fxcm_reconnect_backoff_cap_s))
+                login_reason = "reconnect"
                 next_retry_ts_ms = int(time.time() * 1000 + sleep_s * 1000)
                 err_ts = int(time.time() * 1000)
                 self.status.append_error(

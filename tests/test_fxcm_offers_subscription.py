@@ -83,6 +83,17 @@ def test_fxcm_tick_missing_event_time_is_loud_and_dropped() -> None:
     assert any(err.get("code") == "missing_tick_event_ts" for err in status.errors)
 
 
+def test_fxcm_tick_event_ahead_of_receipt_normalizes_snap_ts() -> None:
+    event_time = datetime(2026, 1, 20, 17, 0, 2, tzinfo=timezone.utc)
+    row = DummyRow("XAU/USD", 2000.0, 2000.2, event_time)
+    status = DummyStatus()
+    receipt_ms = int(to_epoch_ms_utc(event_time)) - 1000
+    tick = _offer_row_to_tick(row, ["XAUUSD"], receipt_ms=receipt_ms, status=status)
+    assert tick is not None
+    assert tick.snap_ts_ms >= tick.tick_ts_ms
+    assert any(err.get("code") == "fxcm_tick_event_ahead_of_receipt" for err in status.errors)
+
+
 def test_stale_no_ticks_triggers_resubscribe_then_reconnect() -> None:
     action_first = _stale_action(
         last_tick_ts_ms=0,

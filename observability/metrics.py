@@ -37,6 +37,7 @@ class Metrics:
     ohlcv_preview_batches_total: Counter
     ohlcv_preview_validation_errors_total: Counter
     ohlcv_preview_last_publish_ts_ms: Gauge
+    ohlcv_preview_late_ticks_dropped_total: Counter
     ohlcv_final_validation_errors_total: Counter
     store_upserts_total: Counter
     warmup_requests_total: Counter
@@ -195,6 +196,12 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         "Останній час публікації preview OHLCV",
         registry=registry,
     )
+    ohlcv_preview_late_ticks_dropped_total = Counter(
+        "connector_ohlcv_preview_late_ticks_dropped_total",
+        "Кількість відкинутих late ticks у preview",
+        ["tf"],
+        registry=registry,
+    )
     ohlcv_final_validation_errors_total = Counter(
         "connector_ohlcv_final_validation_errors_total",
         "Кількість помилок валідації final OHLCV",
@@ -312,6 +319,7 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         ohlcv_preview_batches_total=ohlcv_preview_batches_total,
         ohlcv_preview_validation_errors_total=ohlcv_preview_validation_errors_total,
         ohlcv_preview_last_publish_ts_ms=ohlcv_preview_last_publish_ts_ms,
+        ohlcv_preview_late_ticks_dropped_total=ohlcv_preview_late_ticks_dropped_total,
         ohlcv_final_validation_errors_total=ohlcv_final_validation_errors_total,
         store_upserts_total=store_upserts_total,
         warmup_requests_total=warmup_requests_total,

@@ -93,7 +93,7 @@
   * Бюджет/таймаут на одну команду.
   * Retry/backoff на transient errors.
   * Детермінованість: один і той же інтервал → однаковий результат.
-* **Scope:** `runtime/fxcm/history_provider.py`, `runtime/history_provider.py`, `runtime/warmup.py`, `runtime/backfill.py`, `store/file_cache.py` (або FileCache module), `tests/*`, `tools/exit_gates/gates/gate_fxcm_history_smoke.py`.
+* **Scope:** `runtime/fxcm/history_provider.py` (реальний провайдер), `fxcm/history_fxcm_provider.py` (legacy заглушка), `runtime/history_provider.py`, `runtime/warmup.py`, `runtime/backfill.py`, `store/file_cache.py` (або FileCache module), `tests/*`, `tools/exit_gates/gates/gate_fxcm_history_smoke.py`.
 * **Non‑goals:** stream→bar builder (це наступний slice), UI.
 * **Інваріанти/рейки:**
 

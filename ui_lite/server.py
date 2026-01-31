@@ -69,6 +69,51 @@ def build_dedup_key(payload: Dict[str, Any], bar: Dict[str, Any]) -> Optional[Tu
     return (symbol, tf, int(open_time))
 
 
+def _grace_ms_for_tf(tf: str) -> int:
+    if tf == "1m":
+        return 5_000
+    if tf == "15m":
+        return 60_000
+    return 0
+
+
+def _compute_preview_stale_state(
+    now_ms: int,
+    last_open_by_tf: Dict[str, Any],
+    calendar: Optional[Calendar],
+    market_open: bool,
+) -> Tuple[str, int, int, int]:
+    if not market_open:
+        return "", 0, 0, 0
+    stale_tf = ""
+    stale_delay_bars = 0
+    expected_open_ms = 0
+    last_open_ms = 0
+    for tf_key, open_ms in last_open_by_tf.items():
+        tf_str = str(tf_key)
+        tf_ms = TF_TO_MS.get(tf_str)
+        if tf_ms is None:
+            continue
+        try:
+            open_ms_int = int(open_ms)
+        except Exception:
+            continue
+        if calendar is None and tf_str == "1d":
+            continue
+        expected_ms = get_bucket_open_ms(tf_str, now_ms, calendar)
+        grace_ms = _grace_ms_for_tf(tf_str)
+        expected_for_delay = int(expected_ms)
+        if grace_ms > 0 and now_ms - int(expected_ms) <= grace_ms:
+            expected_for_delay = int(expected_ms) - int(tf_ms)
+        delay_bars = max(0, int((expected_for_delay - open_ms_int) // tf_ms))
+        if delay_bars >= stale_delay_bars:
+            stale_delay_bars = delay_bars
+            stale_tf = tf_str
+            expected_open_ms = int(expected_ms)
+            last_open_ms = int(open_ms_int)
+    return stale_tf, stale_delay_bars, expected_open_ms, last_open_ms
+
+
 def is_final_bar(payload: Dict[str, Any], bar: Dict[str, Any]) -> bool:
     complete = bar.get("complete")
     if complete is None:
@@ -114,6 +159,8 @@ class UiLiteState:
     status_last_error: str = ""
     status_ok: bool = False
     status_last_error_short: str = ""
+    status_fresh_warn_ms: int = 5000
+    status_publish_period_ms: int = 1000
 
     def snapshot(self) -> Dict[str, Any]:
         with self.lock:
@@ -145,6 +192,8 @@ class UiLiteState:
                 "status_last_error": self.status_last_error,
                 "status_ok": self.status_ok,
                 "status_last_error_short": self.status_last_error_short,
+                "status_fresh_warn_ms": self.status_fresh_warn_ms,
+                "status_publish_period_ms": self.status_publish_period_ms,
             }
 
 
@@ -583,7 +632,14 @@ def _build_health_payload(now_ms: int) -> Dict[str, Any]:
         status_ok = bool(_STATE.status_ok)
         last_status_ts_ms = int(_STATE.last_status_ts_ms)
         status_age_ms = int(now_ms - last_status_ts_ms) if status_ok and last_status_ts_ms > 0 else None
-        status_stale = bool(status_age_ms is not None and status_age_ms > 5000)
+        market = status_payload.get("market")
+        market_open = bool(market.get("is_open", True)) if isinstance(market, dict) else True
+        heartbeat_warn_ms = int(_STATE.status_fresh_warn_ms)
+        heartbeat_hard_warn_ms = int(_STATE.status_publish_period_ms) * 10
+        if market_open:
+            status_stale = bool(status_age_ms is not None and status_age_ms > heartbeat_warn_ms)
+        else:
+            status_stale = bool(status_age_ms is not None and status_age_ms > heartbeat_hard_warn_ms)
         ui_payload = {
             "ohlcv_inbound_invalid_total": _STATE.ohlcv_inbound_invalid_total,
             "ohlcv_inbound_last_error": _STATE.ohlcv_inbound_last_error,
@@ -680,14 +736,18 @@ async def _log_state(stop_event: threading.Event) -> None:
         price_raw = status_payload.get("price")
         fxcm_raw = status_payload.get("fxcm")
         preview_raw = status_payload.get("ohlcv_preview")
+        market_raw = status_payload.get("market")
         price: Dict[str, Any] = price_raw if isinstance(price_raw, dict) else {}
         fxcm: Dict[str, Any] = fxcm_raw if isinstance(fxcm_raw, dict) else {}
         preview: Dict[str, Any] = preview_raw if isinstance(preview_raw, dict) else {}
+        market: Dict[str, Any] = market_raw if isinstance(market_raw, dict) else {}
         last_publish_ts_ms = int(preview.get("last_publish_ts_ms", 0))
         ohlcv_age_s = (now_ms - last_publish_ts_ms) / 1000.0 if last_publish_ts_ms > 0 else None
         tick_lag_ms = int(price.get("tick_lag_ms", 0))
         tick_lag_s = tick_lag_ms / 1000.0 if tick_lag_ms > 0 else 0.0
         fxcm_state = str(fxcm.get("state", ""))
+        market_open = bool(market.get("is_open", True))
+        next_open_utc = str(market.get("next_open_utc", ""))
         late_drop = int(preview.get("late_ticks_dropped_total", 0))
         misalign = int(preview.get("misaligned_open_time_total", 0))
         past_mut = int(preview.get("past_mutations_total", 0))
@@ -721,23 +781,13 @@ async def _log_state(stop_event: threading.Event) -> None:
         stale_delay_bars = 0
         expected_open_ms = 0
         last_open_ms = 0
-        for tf_key, open_ms in last_open_by_tf.items():
-            tf_ms = TF_TO_MS.get(str(tf_key))
-            if tf_ms is None:
-                continue
-            try:
-                open_ms_int = int(open_ms)
-            except Exception:
-                continue
-            if calendar is None and str(tf_key) == "1d":
-                continue
-            expected_ms = get_bucket_open_ms(str(tf_key), now_ms, calendar)
-            delay_bars = max(0, int((expected_ms - open_ms_int) // tf_ms))
-            if delay_bars >= stale_delay_bars:
-                stale_delay_bars = delay_bars
-                stale_tf = str(tf_key)
-                expected_open_ms = int(expected_ms)
-                last_open_ms = int(open_ms_int)
+        if market_open:
+            stale_tf, stale_delay_bars, expected_open_ms, last_open_ms = _compute_preview_stale_state(
+                now_ms=now_ms,
+                last_open_by_tf=last_open_by_tf,
+                calendar=calendar,
+                market_open=market_open,
+            )
 
         expected_open_utc = _to_utc_iso(expected_open_ms) if expected_open_ms > 0 else "-"
         last_open_utc = _to_utc_iso(last_open_ms) if last_open_ms > 0 else "-"
@@ -753,16 +803,19 @@ async def _log_state(stop_event: threading.Event) -> None:
             transport = "WARN"
             transport_reason = "status_missing"
             next_action = "перевірити status snapshot"
-        if status_age_s is not None and status_age_s > 10.0:
+        status_warn_s = _STATE.status_fresh_warn_ms / 1000.0
+        status_hard_warn_s = (_STATE.status_publish_period_ms * 10) / 1000.0
+        status_warn_allowed = market_open or (status_age_s is not None and status_age_s > status_hard_warn_s)
+        if status_warn_allowed and status_age_s is not None and status_age_s > status_warn_s * 2:
             transport = "ERROR"
             transport_reason = "status_stale"
             next_action = "перевірити status publisher"
-        elif status_age_s is not None and status_age_s > 2.0:
+        elif status_warn_allowed and status_age_s is not None and status_age_s > status_warn_s:
             transport = "WARN"
             transport_reason = "status_lag"
             next_action = "перевірити status publisher"
 
-        if ohlcv_age_s is not None:
+        if market_open and ohlcv_age_s is not None:
             if ohlcv_age_s > 30.0:
                 transport = "ERROR"
                 transport_reason = "ohlcv_stale"
@@ -784,14 +837,19 @@ async def _log_state(stop_event: threading.Event) -> None:
             transport_reason = "tick_lag"
 
         data_state = "OK"
-        if stale_delay_bars >= 3:
-            data_state = "ERROR"
-        elif stale_delay_bars >= 1:
-            data_state = "WARN"
+        if market_open:
+            if stale_delay_bars >= 3:
+                data_state = "ERROR"
+            elif stale_delay_bars >= 1:
+                data_state = "WARN"
 
         health = transport
         if transport == "OK" and data_state != "OK":
             health = data_state
+        if not market_open and transport == "OK" and data_state == "OK":
+            transport_reason = "paused_market_closed"
+            if next_open_utc:
+                next_action = f"next_open={next_open_utc}"
 
         status_age_str = f"{status_age_s:.1f}s" if status_age_s is not None else "-"
         ohlcv_age_str = f"{ohlcv_age_s:.1f}s" if ohlcv_age_s is not None else "-"
@@ -872,27 +930,33 @@ async def _log_state(stop_event: threading.Event) -> None:
             if summary_parts:
                 log.warning("ohlcv_preview %s", "; ".join(summary_parts))
             top_parts = []
-            for tf_key, open_ms in last_open_by_tf.items():
-                tf_ms = TF_TO_MS.get(str(tf_key))
-                if tf_ms is None:
-                    continue
-                try:
-                    open_ms_int = int(open_ms)
-                except Exception:
-                    continue
-                    if calendar is None and str(tf_key) == "1d":
+            if market_open:
+                for tf_key, open_ms in last_open_by_tf.items():
+                    tf_str = str(tf_key)
+                    tf_ms = TF_TO_MS.get(tf_str)
+                    if tf_ms is None:
                         continue
-                    expected_ms = get_bucket_open_ms(str(tf_key), now_ms, calendar)
-                delay_bars = max(0, int((expected_ms - open_ms_int) // tf_ms))
-                if delay_bars > 0:
-                    if open_ms_int <= 0:
+                    try:
+                        open_ms_int = int(open_ms)
+                    except Exception:
                         continue
-                    delay_s = float(delay_bars * tf_ms) / 1000.0
-                    if delay_s >= 3600.0:
-                        delay_str = f"{delay_s / 3600.0:.1f}h"
-                    else:
-                        delay_str = f"{delay_s / 60.0:.1f}m"
-                    top_parts.append(f"{tf_key}:delay={delay_str}")
+                    if calendar is None and tf_str == "1d":
+                        continue
+                    expected_ms = get_bucket_open_ms(tf_str, now_ms, calendar)
+                    grace_ms = _grace_ms_for_tf(tf_str)
+                    expected_for_delay = int(expected_ms)
+                    if grace_ms > 0 and now_ms - int(expected_ms) <= grace_ms:
+                        expected_for_delay = int(expected_ms) - int(tf_ms)
+                    delay_bars = max(0, int((expected_for_delay - open_ms_int) // tf_ms))
+                    if delay_bars > 0:
+                        if open_ms_int <= 0:
+                            continue
+                        delay_s = float(delay_bars * tf_ms) / 1000.0
+                        if delay_s >= 3600.0:
+                            delay_str = f"{delay_s / 3600.0:.1f}h"
+                        else:
+                            delay_str = f"{delay_s / 60.0:.1f}m"
+                        top_parts.append(f"{tf_key}:delay={delay_str}")
             if top_parts:
                 log.warning("top_tf: %s", ", ".join(top_parts[:4]))
 
@@ -926,6 +990,8 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
     with _STATE.lock:
         _STATE.subscribed_channel = config.ch_ohlcv()
         _STATE.preview_publish_interval_ms = int(config.ohlcv_preview_publish_interval_ms)
+        _STATE.status_fresh_warn_ms = int(config.status_fresh_warn_ms)
+        _STATE.status_publish_period_ms = int(config.status_publish_period_ms)
         _STATE.calendar = Calendar(calendar_tag=config.calendar_tag, overrides_path=config.calendar_path)
     log.debug("UI Lite startup: redis_channel=%s", config.ch_ohlcv())
     _start_redis_subscriber(

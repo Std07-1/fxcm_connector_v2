@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable, List, Optional
 
 from config.config import Config
 from observability.metrics import Metrics
+from runtime.fxcm.history_provider import FxcmForexConnectHistoryAdapter, FxcmHistoryProvider
 from runtime.history_provider import HistoryProvider, guard_history_ready
 from runtime.status import StatusManager
 from store.file_cache import FileCache
@@ -23,11 +25,14 @@ def run_backfill(
     rebuild_timeframes: Optional[List[str]] = None,
     rebuild_callback: Optional[Callable[[str, int, int, List[str]], None]] = None,
 ) -> None:
+    log = logging.getLogger("backfill")
     end_ms = end_ms - (end_ms % 60_000) - 1
     chunk_ms = config.history_chunk_minutes * 60 * 1000
     limit = config.history_chunk_limit
 
     t = start_ms
+    if isinstance(provider, FxcmHistoryProvider) and isinstance(provider.adapter, FxcmForexConnectHistoryAdapter):
+        log.info("FXCM login component=history reason=backfill symbol=%s", symbol)
     guard_history_ready(
         provider=provider,
         calendar=status.calendar,
