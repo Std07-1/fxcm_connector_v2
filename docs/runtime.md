@@ -46,6 +46,8 @@ Handlers визначені у composition root (app/main.py#L252-L265):
 Status snapshot включає: process/market/errors/degraded/price/ohlcv/derived/tail_guard/republish (runtime/status.py#L32-L144).
 - **errors[]** — loud помилки (runtime/command_bus.py#L86-L159).
 - **degraded** — зокрема `calendar_error` при ініціалізаційній помилці календаря (runtime/status.py#L45-L120; core/time/calendar.py#L24-L38).
+- **FXCM event ahead** — аномалії `event_ts_ms > receipt_ms` рахуються метрикою `fxcm_event_ahead_total` і throttled‑warning у errors[] (≤ 1/60с на символ).
+- **Tick out-of-order** — `tick_out_of_order_total{symbol}`; drop лише якщо bucket іде назад (out-of-order у межах bucket дозволено).
 - Публікація status регулюється `status_publish_period_ms` (app/main.py#L252-L358; config/config.py#L66-L75).
 - Якщо snapshot перевищує ліміт — публікується компактний payload (runtime/status.py#L300-L410).
 - Метрики піднімаються через Prometheus (app/main.py#L53-L79; observability/metrics.py#L41-L105).
@@ -53,6 +55,7 @@ Status snapshot включає: process/market/errors/degraded/price/ohlcv/deriv
 ## Preview pipeline
 - **PreviewBuilder** будує бари з ticks, кешує та готує payloads (runtime/preview_builder.py#L39-L124).
 - Публікація preview у {NS}:ohlcv і оновлення status (app/main.py#L321-L350; runtime/status.py#L234-L280).
+- E2E smoke test: tick → status → preview без FXCM SDK (tests/test_e2e_tick_to_preview_smoke.py).
 
 ## Final pipeline
 - **Warmup** завантажує історію та пише в SQLite, опційно rebuild HTF (app/main.py#L140-L208; runtime/warmup.py#L34-L95).

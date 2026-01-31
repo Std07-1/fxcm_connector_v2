@@ -5,10 +5,10 @@
 - **config/** — SSOT конфіг, профілі, calendar overrides, шаблони секретів. Ключові runtime перемикачі — тут.
 - **core/** — доменна SSOT логіка: контракти/валидація, календар/час, ринкові типи, runtime‑режими.
 - **runtime/** — виконання: HTTP API, command bus, tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
-- **observability/** — метрики/Prometheus.
+- **observability/** — метрики/Prometheus (включно `fxcm_event_ahead_total`, `tick_out_of_order_total`).
 - **store/** — FileCache (CSV + meta.json) як SSOT (єдина персистентність).
 - **ui_lite/** — єдина канонічна UI (static + debug endpoint); health враховує market closed і heartbeat cadence.
-- **tests/** — unit/contract/gate тести; fixtures включно з JSONL ticks.
+- **tests/** — unit/contract/gate тести; e2e smoke tick→status→preview; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
 - **docs/** — SSOT документація/аудити/правила.
 - **data/**, **reports/** — артефакти запусків і аудитів.

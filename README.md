@@ -12,6 +12,8 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
 - **Status pubsub** — degraded‑but‑loud: при overflow публікується compact payload.
 - **Status heartbeat** — cadence керується SSOT: `status_publish_period_ms`, `status_fresh_warn_ms`.
+- **FXCM event ahead** — лічильник `fxcm_event_ahead_total{symbol}`; попередження throttle ≤ 1/60с на символ.
+- **Tick out-of-order** — лічильник `tick_out_of_order_total{symbol}`; drop лише якщо bucket іде назад.
 - **UI Lite** як канонічна UI (HTTP + WS + /debug, health/STALE/overlay, market‑aware grace).
 - **Market closed** — ohlcv/payload можуть бути “-”, health не трактує це як lag (крім heartbeat > 10×period).
 - **Exit gates** як SSOT контроль якості (tools/run_exit_gates.py).
@@ -81,6 +83,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 - Маніфести: tools/exit_gates/manifest*.json (P0/P1/P2/повний).
 - Bootstrap P0: tools/bootstrap_p0.ps1 (ruff/mypy/pytest + P0 gates).
 - Додаткові rails (P8): gate_fxcm_tick_mode_config, gate_fxcm_tick_liveness.
+- E2E smoke: gate_e2e_tick_to_preview_smoke (tick → status → preview без FXCM SDK).
 
 ## Конфіг
 

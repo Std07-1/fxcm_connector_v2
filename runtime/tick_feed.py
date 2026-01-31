@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, Optional
 
 from config.config import Config
 from core.validation.validator import ContractError, SchemaValidator
@@ -24,6 +24,7 @@ class TickPublisher:
     validator: SchemaValidator
     status: StatusManager
     metrics: Optional[Metrics] = None
+    _last_tick_ts_by_symbol: Dict[str, int] = field(default_factory=dict)
 
     def publish_tick(
         self,
@@ -34,28 +35,32 @@ class TickPublisher:
         tick_ts_ms: int,
         snap_ts_ms: int,
     ) -> None:
-        snapshot = self.status.snapshot()
-        price = snapshot.get("price") if isinstance(snapshot, dict) else None
-        last_tick_ts_ms = 0
-        if isinstance(price, dict):
-            last_tick_ts_ms = int(price.get("last_tick_ts_ms", 0))
+        last_tick_ts_ms = int(self._last_tick_ts_by_symbol.get(symbol, 0))
         if isinstance(tick_ts_ms, int) and not isinstance(tick_ts_ms, bool):
             if last_tick_ts_ms > 0 and int(tick_ts_ms) < int(last_tick_ts_ms):
-                self.status.append_error(
-                    code="tick_out_of_order",
-                    severity="error",
-                    message="tick_ts_ms менший за попередній tick",
-                    context={
-                        "symbol": symbol,
-                        "tick_ts_ms": int(tick_ts_ms),
-                        "last_tick_ts_ms": int(last_tick_ts_ms),
-                        "snap_ts_ms": int(snap_ts_ms),
-                    },
-                )
-                self.status.mark_degraded("tick_out_of_order")
-                self.status.record_tick_contract_reject()
-                self.status.record_fxcm_contract_reject()
-                return
+                bucket_open_ms = int(tick_ts_ms) // 60_000 * 60_000
+                last_bucket_open_ms = int(last_tick_ts_ms) // 60_000 * 60_000
+                if bucket_open_ms < last_bucket_open_ms:
+                    if self.metrics is not None:
+                        self.metrics.tick_out_of_order_total.labels(symbol=symbol).inc()
+                    self.status.append_error_throttled(
+                        code="tick_out_of_order",
+                        severity="error",
+                        message="tick_ts_ms менший за попередній tick (bucket назад)",
+                        context={
+                            "symbol": symbol,
+                            "tick_ts_ms": int(tick_ts_ms),
+                            "last_tick_ts_ms": int(last_tick_ts_ms),
+                            "snap_ts_ms": int(snap_ts_ms),
+                        },
+                        throttle_key=f"tick_out_of_order:{symbol}",
+                        throttle_ms=60_000,
+                        now_ms=int(snap_ts_ms),
+                    )
+                    self.status.mark_degraded("tick_out_of_order")
+                    self.status.record_tick_contract_reject()
+                    self.status.record_fxcm_contract_reject()
+                    return
         payload = {
             "symbol": symbol,
             "bid": bid,
@@ -74,6 +79,7 @@ class TickPublisher:
                 snap_ts_ms=int(snap_ts_ms),
                 now_ms=now_ms,
             )
+            self._last_tick_ts_by_symbol[symbol] = int(tick_ts_ms)
         except ContractError as exc:
             self.status.append_error(
                 code="tick_contract_error",

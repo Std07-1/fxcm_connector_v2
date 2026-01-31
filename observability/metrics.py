@@ -17,10 +17,12 @@ class Metrics:
     ticks_total: Counter
     tick_errors_total: Counter
     tick_contract_reject_total: Counter
+    tick_out_of_order_total: Counter
     last_tick_ts_ms: Gauge
     tick_lag_ms: Gauge
     fxcm_ticks_total: Counter
     fxcm_ticks_dropped_total: Counter
+    fxcm_event_ahead_total: Counter
     fxcm_last_tick_ts_ms: Gauge
     fxcm_tick_skew_ms: Gauge
     fxcm_stale_events_total: Counter
@@ -94,6 +96,12 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         "Кількість відхилених tick через контракт",
         registry=registry,
     )
+    tick_out_of_order_total = Counter(
+        "connector_tick_out_of_order_total",
+        "Кількість tick з bucket, що йде назад",
+        ["symbol"],
+        registry=registry,
+    )
     last_tick_ts_ms = Gauge(
         "connector_last_tick_ts_ms",
         "Останній tick_ts у ms",
@@ -113,6 +121,12 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         "connector_fxcm_ticks_dropped_total",
         "Кількість FXCM tick, які відкинуті",
         ["reason"],
+        registry=registry,
+    )
+    fxcm_event_ahead_total = Counter(
+        "connector_fxcm_event_ahead_total",
+        "Кількість FXCM tick з event_ts_ms > receipt_ms",
+        ["symbol"],
         registry=registry,
     )
     fxcm_last_tick_ts_ms = Gauge(
@@ -299,10 +313,12 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         ticks_total=ticks_total,
         tick_errors_total=tick_errors_total,
         tick_contract_reject_total=tick_contract_reject_total,
+        tick_out_of_order_total=tick_out_of_order_total,
         last_tick_ts_ms=last_tick_ts_ms,
         tick_lag_ms=tick_lag_ms,
         fxcm_ticks_total=fxcm_ticks_total,
         fxcm_ticks_dropped_total=fxcm_ticks_dropped_total,
+        fxcm_event_ahead_total=fxcm_event_ahead_total,
         fxcm_last_tick_ts_ms=fxcm_last_tick_ts_ms,
         fxcm_tick_skew_ms=fxcm_tick_skew_ms,
         fxcm_stale_events_total=fxcm_stale_events_total,

@@ -35,6 +35,19 @@ class _TickStatusSink(Protocol):
         context: Optional[Dict[str, Any]] = None,
     ) -> None: ...
 
+    def append_error_throttled(
+        self,
+        code: str,
+        severity: str,
+        message: str,
+        context: Optional[Dict[str, Any]] = None,
+        throttle_key: Optional[str] = None,
+        throttle_ms: int = 60_000,
+        now_ms: Optional[int] = None,
+        external_last_ts_by_key: Optional[Dict[str, int]] = None,
+        external_lock: Optional[threading.Lock] = None,
+    ) -> bool: ...
+
     def record_tick_drop_missing_event(self, now_ms: int) -> None: ...
 
 
@@ -205,6 +218,8 @@ def _offer_row_to_tick(
     allowed_symbols: Iterable[str],
     receipt_ms: int,
     status: _TickStatusSink,
+    event_ahead_warn_state: Optional[Tuple[Dict[str, int], threading.Lock]] = None,
+    event_ahead_throttle_ms: int = 60_000,
 ) -> Optional[Tick]:
     instrument = getattr(row, "instrument", None)
     if not instrument:
@@ -250,7 +265,13 @@ def _offer_row_to_tick(
         return None
     snap_ts_ms = int(receipt_ms)
     if int(event_ts_ms) > int(snap_ts_ms):
-        status.append_error(
+        metrics = status.metrics
+        if metrics is not None:
+            metrics.fxcm_event_ahead_total.labels(symbol=symbol).inc()
+        warn_state = event_ahead_warn_state
+        last_by_symbol = warn_state[0] if warn_state is not None else None
+        warn_lock = warn_state[1] if warn_state is not None else None
+        status.append_error_throttled(
             code="fxcm_tick_event_ahead_of_receipt",
             severity="warning",
             message="FXCM tick event_ts_ms > receipt_ms; snap_ts_ms нормалізовано",
@@ -259,6 +280,11 @@ def _offer_row_to_tick(
                 "tick_ts_ms": int(event_ts_ms),
                 "snap_ts_ms": int(snap_ts_ms),
             },
+            throttle_key=f"fxcm_tick_event_ahead_of_receipt:{symbol}",
+            throttle_ms=int(event_ahead_throttle_ms),
+            now_ms=int(receipt_ms),
+            external_last_ts_by_key=last_by_symbol,
+            external_lock=warn_lock,
         )
         snap_ts_ms = int(event_ts_ms)
     return normalize_tick(
@@ -335,7 +361,14 @@ class FXCMOfferSubscription:
         def _on_row(_listener: Any, _row_id: str, row: Any) -> None:
             now_ms = int(time.time() * 1000)
             try:
-                tick = _offer_row_to_tick(row, self._symbols, receipt_ms=now_ms, status=self._status)
+                tick = _offer_row_to_tick(
+                    row,
+                    self._symbols,
+                    receipt_ms=now_ms,
+                    status=self._status,
+                    event_ahead_warn_state=(self._last_event_ahead_warn_ts_ms_by_symbol, self._event_ahead_warn_lock),
+                    event_ahead_throttle_ms=self._event_ahead_throttle_ms,
+                )
                 if tick is None:
                     return
             except ContractError as exc:
@@ -407,6 +440,9 @@ class FxcmForexConnectStream:
 
     _thread: Optional[threading.Thread] = None
     _stop_event: threading.Event = field(default_factory=threading.Event)
+    _event_ahead_warn_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _last_event_ahead_warn_ts_ms_by_symbol: Dict[str, int] = field(default_factory=dict, repr=False)
+    _event_ahead_throttle_ms: int = 60_000
 
     def start(self) -> Optional[FxcmForexConnectHandle]:
         if not ensure_fxcm_ready(self.config, self.status):

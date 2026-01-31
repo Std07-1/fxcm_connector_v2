@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -162,6 +163,8 @@ class StatusManager:
         self._tick_window_dropped_total = 0
         self._tick_window_ms = 60_000
         self._preview_paused = False
+        self._error_throttle_lock = threading.Lock()
+        self._error_throttle_last_ts_by_key: Dict[str, int] = {}
 
     def _ensure_tail_guard_tiers(self) -> Dict[str, Any]:
         tail = self._snapshot.get("tail_guard")
@@ -459,6 +462,32 @@ class StatusManager:
         self._snapshot.setdefault("errors", []).append(err)
         if self.metrics is not None:
             self.metrics.errors_total.labels(code=code, severity=severity).inc()
+
+    def append_error_throttled(
+        self,
+        code: str,
+        severity: str,
+        message: str,
+        context: Optional[Dict[str, Any]] = None,
+        throttle_key: Optional[str] = None,
+        throttle_ms: int = 60_000,
+        now_ms: Optional[int] = None,
+        external_last_ts_by_key: Optional[Dict[str, int]] = None,
+        external_lock: Optional[threading.Lock] = None,
+    ) -> bool:
+        key = str(throttle_key or code)
+        now = int(now_ms or _now_ms())
+        last_map = (
+            external_last_ts_by_key if external_last_ts_by_key is not None else self._error_throttle_last_ts_by_key
+        )
+        lock = external_lock if external_lock is not None else self._error_throttle_lock
+        with lock:
+            last_ts = int(last_map.get(key, 0))
+            if now - last_ts < int(throttle_ms):
+                return False
+            last_map[key] = now
+        self.append_error(code=code, severity=severity, message=message, context=context)
+        return True
 
     def mark_degraded(self, tag: str) -> None:
         degraded = self._snapshot.get("degraded")
