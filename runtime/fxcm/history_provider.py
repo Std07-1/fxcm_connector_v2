@@ -218,8 +218,10 @@ def _to_ms(value: Any) -> Optional[int]:
         val = int(value)
         if val < 10**11:
             return int(val * 1000)
+        if val > 9_999_999_999_999_999:
+            return int(val // 1_000_000)
         if val > 9_999_999_999_999:
-            return None
+            return int(val // 1_000)
         return val
     if isinstance(value, str):
         text = value.strip()
@@ -292,7 +294,15 @@ def _rows_to_bars(symbol: str, rows: Iterable[Any], limit: int) -> List[Dict[str
             raise ContractError(f"history_row_missing_date: row_keys={row_keys} {evidence}")
         open_time_ms = _to_ms(open_time_raw)
         if open_time_ms is None:
-            raise ContractError("history_row_date_invalid")
+            try:
+                value_repr = repr(open_time_raw)
+            except Exception:
+                value_repr = "<repr_error>"
+            if len(value_repr) > 400:
+                value_repr = value_repr[:400] + "..."
+            raise ContractError(
+                "history_row_date_invalid: " f"value_type={type(open_time_raw).__name__} value_repr={value_repr}"
+            )
         close_time_raw = _row_value(row, ["close_time", "time_close", "close_time_utc"])
         close_time_ms = _to_ms(close_time_raw) if close_time_raw is not None else None
         if close_time_ms is None:
