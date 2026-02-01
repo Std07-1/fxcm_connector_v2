@@ -22,6 +22,10 @@ from runtime.fxcm.tick_liveness import FxcmTickLiveness
 from runtime.status import StatusManager
 
 log = logging.getLogger("fxcm_forexconnect")
+if not log.handlers:
+    log.setLevel(logging.INFO)
+    log.addHandler(logging.StreamHandler())
+    log.propagate = False
 
 
 class _TickStatusSink(Protocol):
@@ -92,7 +96,7 @@ def ensure_fxcm_ready(config: Config, status: StatusManager) -> bool:
     ok, reason = check_fxcm_environment(config)
     if ok:
         status.update_fxcm_state(
-            state="connected",
+            state="sdk_ok",
             last_tick_ts_ms=0,
             last_err=None,
             last_ok_ts_ms=int(time.time() * 1000),
@@ -338,11 +342,19 @@ class FXCMOfferSubscription:
         symbols: List[str],
         on_tick: Callable[[Tick], None],
         status: StatusManager,
+        event_ahead_warn_state: Optional[Tuple[Dict[str, int], threading.Lock]] = None,
+        event_ahead_throttle_ms: int = 60_000,
     ) -> None:
         self._fx = fx
         self._symbols = [normalize_symbol(s) for s in symbols]
         self._on_tick = on_tick
         self._status = status
+        if event_ahead_warn_state is None:
+            self._last_event_ahead_warn_ts_ms_by_symbol = {}
+            self._event_ahead_warn_lock = threading.Lock()
+        else:
+            self._last_event_ahead_warn_ts_ms_by_symbol, self._event_ahead_warn_lock = event_ahead_warn_state
+        self._event_ahead_throttle_ms = int(event_ahead_throttle_ms)
         self._offers_table = None
         self._listener = None
 
@@ -443,6 +455,8 @@ class FxcmForexConnectStream:
     _event_ahead_warn_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _last_event_ahead_warn_ts_ms_by_symbol: Dict[str, int] = field(default_factory=dict, repr=False)
     _event_ahead_throttle_ms: int = 60_000
+    _last_market_closed_log_ms: int = 0
+    _last_closed_probe_ts_ms: int = 0
 
     def start(self) -> Optional[FxcmForexConnectHandle]:
         if not ensure_fxcm_ready(self.config, self.status):
@@ -575,6 +589,46 @@ class FxcmForexConnectStream:
                 reconnect_attempt += 1
                 backoff_s = _backoff_seconds(reconnect_attempt, cap=float(self.config.fxcm_reconnect_backoff_cap_s))
                 retry_ms = max(next_open_ms, int(now_ms + backoff_s * 1000))
+                if now_ms - self._last_market_closed_log_ms >= 60_000:
+                    log.debug(
+                        "FXCM login skipped: market closed; next_open_utc=%s probe=%s",
+                        _to_utc_iso(int(next_open_ms)),
+                        str(self.config.fxcm_probe_login_when_closed).lower(),
+                    )
+                    self._last_market_closed_log_ms = now_ms
+                if self.config.fxcm_probe_login_when_closed:
+                    interval_ms = int(self.config.fxcm_probe_login_interval_s) * 1000
+                    if now_ms - self._last_closed_probe_ts_ms >= interval_ms:
+                        self._last_closed_probe_ts_ms = now_ms
+                        fx_class, err = _try_import_forexconnect()
+                        if fx_class is None:
+                            log.warning("FXCM probe login skipped: SDK недоступний: %s", err)
+                        else:
+                            try:
+                                fx_probe = fx_class()
+                                fx_probe.login(
+                                    self.config.fxcm_username,
+                                    self.config.fxcm_password,
+                                    self.config.fxcm_host_url,
+                                    self.config.fxcm_connection,
+                                    "",
+                                    "",
+                                )
+                                if hasattr(fx_probe, "logout"):
+                                    fx_probe.logout()
+                                log.warning(
+                                    "FXCM probe login OK; trading session closed until %s",
+                                    _to_utc_iso(int(next_open_ms)),
+                                )
+                                self.status.mark_degraded("fxcm_calendar_mismatch")
+                            except Exception as exc:  # noqa: BLE001
+                                log.info(
+                                    "FXCM probe login failed: %s connection=%s host=%s user=%s",
+                                    exc,
+                                    self.config.fxcm_connection,
+                                    self.config.fxcm_host_url,
+                                    self.config.fxcm_username,
+                                )
                 self.status.update_fxcm_state(
                     state="paused_market_closed",
                     last_tick_ts_ms=0,
@@ -687,6 +741,11 @@ class FxcmForexConnectStream:
                     symbols=self.config.fxcm_symbols,
                     on_tick=_on_offer_tick,
                     status=self.status,
+                    event_ahead_warn_state=(
+                        self._last_event_ahead_warn_ts_ms_by_symbol,
+                        self._event_ahead_warn_lock,
+                    ),
+                    event_ahead_throttle_ms=self._event_ahead_throttle_ms,
                 )
                 adapter = _LiveAdapter(subscription=subscription, status=self.status)
                 session = FxcmSessionManager(

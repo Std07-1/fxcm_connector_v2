@@ -42,6 +42,8 @@ class Config:
     fxcm_reconnect_backoff_s: float = 2.0
     fxcm_reconnect_backoff_cap_s: float = 60.0
     fxcm_reconnect_cooldown_s: int = 20
+    fxcm_probe_login_when_closed: bool = True  # опційно: probe login при закритому ринку
+    fxcm_probe_login_interval_s: int = 300  # мін. інтервал probe login, щоб не “штурмувати”
 
     history_provider_kind: str = "fxcm_forexconnect"  # fxcm_forexconnect | none
 
@@ -91,6 +93,9 @@ class Config:
 
     status_publish_period_ms: int = 1000
     status_fresh_warn_ms: int = 3000
+    status_soft_limit_bytes: int = 6500  # soft-compact для headroom, hard rail — safety net
+    status_tail_guard_detail_enabled: bool = False  # детальний tail_guard у статусі лише за явним вмиканням
+    # деталі у Work\01lod - Status payload bloat → tail_guard summary + soft compact
 
     ui_lite_enabled: bool = True  # чи увімкнено UI Lite
     ui_lite_host: str = "127.0.0.1"
@@ -277,4 +282,10 @@ def _validate_status_cadence(cfg: Config) -> None:
     if cfg.status_fresh_warn_ms < cfg.status_publish_period_ms * 2:
         logging.getLogger("config").warning(
             "status_fresh_warn_ms < 2*status_publish_period_ms: можливі WARN через джиттер/GC/IO"
+        )
+    if cfg.status_soft_limit_bytes <= 0:
+        raise ValueError("status_soft_limit_bytes має бути > 0")
+    if cfg.status_soft_limit_bytes >= 8192:
+        logging.getLogger("config").warning(
+            "status_soft_limit_bytes >= 8192: soft-compact не дає headroom перед hard rail"
         )

@@ -105,10 +105,12 @@ def _rows_to_bars(symbol: str, rows: Iterable[Any], limit: int) -> List[Dict[str
     for row in rows:
         if len(bars) >= limit:
             break
-        open_time_raw = _row_value(row, ["open_time", "time", "timestamp", "date", "open_time_utc"])
+        open_time_raw = _row_value(row, ["open_time", "time", "timestamp", "date", "Date", "open_time_utc"])
+        if open_time_raw is None:
+            raise ContractError("history_row_missing_date")
         open_time_ms = _to_ms(open_time_raw)
         if open_time_ms is None:
-            continue
+            raise ContractError("history_row_date_invalid")
         close_time_raw = _row_value(row, ["close_time", "time_close", "close_time_utc"])
         close_time_ms = _to_ms(close_time_raw) if close_time_raw is not None else None
         if close_time_ms is None:
@@ -223,6 +225,16 @@ class FxcmHistoryProvider(HistoryProvider):
         budget = self.budget or build_history_budget(1)
         try:
             waited = budget.acquire(symbol)
+            if waited and self.status is not None:
+                self.status.append_error_throttled(
+                    code="history_inflight_wait",
+                    severity="warning",
+                    message="history запит очікує через single in-flight",
+                    context={"symbol": symbol, "start_ms": start_ms, "end_ms": end_ms},
+                    throttle_key=f"history_inflight_wait:{symbol}",
+                    throttle_ms=60_000,
+                    now_ms=int(time.time() * 1000),
+                )
             if self.metrics is not None:
                 self.metrics.fxcm_history_inflight.set(1)
                 if waited:

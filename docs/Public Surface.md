@@ -349,6 +349,11 @@ Endpoint-и:
 
 GET /api/status → зчитати NS:status:snapshot
 
+Примітка до status:snapshot:
+
+- tail_guard_summary публікується завжди як компактний стан.
+- tail_guard (near/far) — debug/опційно; може бути відсутній при soft compact, тоді degraded[] містить "status_soft_compact_tail_guard".
+
 GET /api/bars?symbol=XAUUSD&tf=15m&mode=final&from_ms=...&to_ms=...
 
 читає зі store (SSOT), не з Redis

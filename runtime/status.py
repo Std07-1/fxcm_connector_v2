@@ -60,6 +60,10 @@ def build_status_pubsub_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "last_command": dict(snapshot.get("last_command", {})),
     }
 
+    tail_guard = snapshot.get("tail_guard")
+    if isinstance(tail_guard, dict):
+        payload["tail_guard_summary"] = _build_tail_guard_summary(tail_guard)
+
     for key in [
         "price",
         "fxcm",
@@ -140,6 +144,74 @@ def _default_tail_guard_block() -> Dict[str, Any]:
             },
         },
         "repaired": False,
+    }
+
+
+def _default_tail_guard_tf_state_compact() -> Dict[str, Any]:
+    return {"status": "idle", "missing_bars": 0, "skipped_by_ttl": False}
+
+
+def _extract_tail_guard_meta_int(tail: Dict[str, Any], key: str) -> int:
+    value = tail.get(key)
+    if isinstance(value, int):
+        return int(value)
+    for tier in ["far", "near"]:
+        block = tail.get(tier)
+        if isinstance(block, dict):
+            tier_value = block.get(key)
+            if isinstance(tier_value, int):
+                return int(tier_value)
+    return 0
+
+
+def _extract_tail_guard_meta_bool(tail: Dict[str, Any], key: str) -> bool:
+    value = tail.get(key)
+    if isinstance(value, bool):
+        return bool(value)
+    for tier in ["far", "near"]:
+        block = tail.get(tier)
+        if isinstance(block, dict):
+            tier_value = block.get(key)
+            if isinstance(tier_value, bool):
+                return bool(tier_value)
+    return False
+
+
+def _extract_tail_guard_tf_states(tail: Dict[str, Any]) -> Dict[str, Any]:
+    tf_states = tail.get("tf_states")
+    if isinstance(tf_states, dict):
+        return tf_states
+    for tier in ["far", "near"]:
+        block = tail.get(tier)
+        if isinstance(block, dict):
+            tier_states = block.get("tf_states")
+            if isinstance(tier_states, dict):
+                return tier_states
+    return {}
+
+
+def _build_tail_guard_summary(tail: Dict[str, Any]) -> Dict[str, Any]:
+    required_tfs = ["1m", "15m", "1h", "4h", "1d"]
+    tf_states = _extract_tail_guard_tf_states(tail)
+    compact: Dict[str, Any] = {}
+    for tf in required_tfs:
+        state_obj = tf_states.get(tf)
+        if not isinstance(state_obj, dict):
+            compact[tf] = _default_tail_guard_tf_state_compact()
+            continue
+        status = state_obj.get("state")
+        if status is None:
+            status = state_obj.get("status", "idle")
+        compact[tf] = {
+            "status": str(status),
+            "missing_bars": int(state_obj.get("missing_bars", 0)),
+            "skipped_by_ttl": bool(state_obj.get("skipped_by_ttl", False)),
+        }
+    return {
+        "last_audit_ts_ms": _extract_tail_guard_meta_int(tail, "last_audit_ts_ms"),
+        "window_hours": _extract_tail_guard_meta_int(tail, "window_hours"),
+        "repaired": _extract_tail_guard_meta_bool(tail, "repaired"),
+        "tf_states_compact": compact,
     }
 
 
@@ -504,6 +576,25 @@ class StatusManager:
         if tag in degraded:
             degraded.remove(tag)
         self._snapshot["degraded"] = degraded
+
+    def _apply_soft_compact(self, payload_obj: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        if "tail_guard" not in payload_obj:
+            return payload_obj, False
+        soft_limit = int(self.config.status_soft_limit_bytes)
+        detail_enabled = bool(self.config.status_tail_guard_detail_enabled)
+        payload_size = status_payload_size_bytes(payload_obj)
+        if detail_enabled and payload_size <= soft_limit:
+            return payload_obj, False
+        compact = dict(payload_obj)
+        compact.pop("tail_guard", None)
+        if detail_enabled and payload_size > soft_limit:
+            degraded = compact.get("degraded")
+            if not isinstance(degraded, list):
+                degraded = []
+            if "status_soft_compact_tail_guard" not in degraded:
+                degraded.append("status_soft_compact_tail_guard")
+            compact["degraded"] = _trim_list(degraded, STATUS_DEGRADED_MAX)
+        return compact, True
 
     def is_preview_paused(self) -> bool:
         return bool(self._preview_paused)
@@ -1200,6 +1291,7 @@ class StatusManager:
         self._update_process_fields(ts_ms)
         self._mirror_final_1m()
         payload_obj = build_status_pubsub_payload(self._snapshot)
+        payload_obj, _ = self._apply_soft_compact(payload_obj)
         self.validator.validate_status_v2(payload_obj)
         payload = json.dumps(payload_obj, ensure_ascii=False, separators=(",", ":"))
         payload_size = len(payload.encode("utf-8"))
