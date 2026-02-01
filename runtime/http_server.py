@@ -140,6 +140,39 @@ class HttpServer:
                         if tf not in {"1m", "5m", "15m", "1h", "4h", "1d"}:
                             self._send_json({"error": "tf не підтримується для final"}, status=400)
                             return
+                        try:
+                            _rows, meta = file_cache.load(symbol, tf)
+                        except Exception as exc:  # noqa: BLE001
+                            self._send_json({"error": f"cache meta помилка: {exc}"}, status=500)
+                            return
+                        last_write_source = str(meta.get("last_write_source", ""))
+                        if last_write_source not in {"history", "history_agg"}:
+                            self._send_json(
+                                {
+                                    "error": "final source не з allowlist",
+                                    "last_write_source": last_write_source,
+                                },
+                                status=500,
+                            )
+                            return
+                        if tf == "1m" and last_write_source != "history":
+                            self._send_json(
+                                {
+                                    "error": "final 1m має source=history",
+                                    "last_write_source": last_write_source,
+                                },
+                                status=500,
+                            )
+                            return
+                        if tf != "1m" and last_write_source != "history_agg":
+                            self._send_json(
+                                {
+                                    "error": "final HTF має source=history_agg",
+                                    "last_write_source": last_write_source,
+                                },
+                                status=500,
+                            )
+                            return
                         rows = file_cache.query(symbol=symbol, tf=tf, limit=limit)
                         if not rows:
                             self._send_json({"error": "cache порожній для tf"}, status=400)
@@ -155,7 +188,7 @@ class HttpServer:
                                 "volume": float(r["volume"]),
                                 "complete": True,
                                 "synthetic": False,
-                                "source": "cache",
+                                "source": last_write_source,
                                 "event_ts": int(r["close_time_ms"]),
                             }
                             for r in rows

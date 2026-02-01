@@ -47,6 +47,15 @@ class Config:
 
     history_provider_kind: str = "fxcm_forexconnect"  # fxcm_forexconnect | none
 
+    bootstrap_enable: bool = False  # bootstrap-ланцюжок warmup/backfill/republish
+    bootstrap_republish_after_backfill: bool = True  # republish_tail після backfill
+    bootstrap_tail_guard_after: bool = False  # tail_guard лише за явним флагом
+    mtf_crosscheck_enable: bool = False  # P10.C: MTF cross-check (default OFF)
+    reconcile_enable: bool = False  # P10.B: reconcile finalization (history -> final)
+    reconcile_auto_enable: bool = False  # auto-trigger reconcile на 15m close
+    reconcile_active_symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
+    reconcile_lookback_minutes_default: int = 20
+
     calendar_tag: str = "fxcm_calendar_v1_ny"
     calendar_path: str = "config/calendar_overrides.json"
 

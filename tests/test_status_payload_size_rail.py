@@ -158,6 +158,20 @@ def test_status_payload_size_rail_ok() -> None:
             "published_batches": 0,
             "state": "idle",
         },
+        "reconcile": {
+            "last_run_ts_ms": 0,
+            "last_req_id": "",
+            "last_end_ms": 0,
+            "bucket_open_ms": 0,
+            "bucket_close_ms": 0,
+            "lookback_minutes": 0,
+            "published_1m": 0,
+            "skipped_1m": 0,
+            "published_15m": 0,
+            "skipped_15m": 0,
+            "state": "idle",
+            "last_error": None,
+        },
     }
 
     payload = build_status_pubsub_payload(snapshot)

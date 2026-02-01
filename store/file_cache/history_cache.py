@@ -75,7 +75,7 @@ class FileCache:
         merged, trimmed = trim_rows(merged, self.max_bars)
         ensure_sorted_unique(merged)
         inserted = max(0, len(merged) - len(rows))
-        meta = self._build_meta(merged, meta, now_utc_val, sym, tf_norm)
+        meta = self._build_meta(merged, meta, now_utc_val, sym, tf_norm, str(source))
         self._save(sym, tf_norm, merged, meta)
         return FileCacheAppendResult(
             inserted=inserted,
@@ -194,6 +194,7 @@ class FileCache:
             "last_refresh_utc": "",
             "last_stream_heartbeat_utc": "",
             "last_published_open_time_ms": 0,
+            "last_write_source": "",
         }
 
     def _build_meta(
@@ -203,6 +204,7 @@ class FileCache:
         now_utc: str,
         symbol: str,
         tf: str,
+        last_write_source: str,
     ) -> Dict[str, Any]:
         last_close = int(rows[-1]["close_time_ms"]) if rows else 0
         last_published = int(prev.get("last_published_open_time_ms", 0))
@@ -213,6 +215,7 @@ class FileCache:
             "last_refresh_utc": now_utc,
             "last_stream_heartbeat_utc": now_utc,
             "last_published_open_time_ms": last_published,
+            "last_write_source": str(last_write_source),
             "symbol": symbol,
             "tf": tf,
         }

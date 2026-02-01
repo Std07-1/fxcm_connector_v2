@@ -73,10 +73,14 @@ def build_status_pubsub_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "no_mix",
         "tail_guard",
         "republish",
+        "reconcile",
+        "bootstrap",
     ]:
         value = snapshot.get(key)
         if isinstance(value, dict):
             payload[key] = dict(value)
+            if key == "reconcile" and "last_end_ms" not in payload[key]:
+                payload[key]["last_end_ms"] = 0
 
     derived = snapshot.get("derived_rebuild")
     if isinstance(derived, dict):
@@ -447,6 +451,27 @@ class StatusManager:
                 "forced": False,
                 "published_batches": 0,
                 "state": "idle",
+            },
+            "reconcile": {
+                "last_run_ts_ms": 0,
+                "last_req_id": "",
+                "last_end_ms": 0,
+                "bucket_open_ms": 0,
+                "bucket_close_ms": 0,
+                "lookback_minutes": 0,
+                "published_1m": 0,
+                "skipped_1m": 0,
+                "published_15m": 0,
+                "skipped_15m": 0,
+                "state": "idle",
+                "last_error": None,
+            },
+            "bootstrap": {
+                "state": "idle",
+                "step": "",
+                "last_step_ts_ms": 0,
+                "steps": [],
+                "last_error": None,
             },
             "command_bus": {
                 "channel": self.config.ch_commands(),
@@ -1193,6 +1218,128 @@ class StatusManager:
         republish["published_batches"] = int(published_batches)
         republish["state"] = state
         self._snapshot["republish"] = republish
+
+    def record_reconcile(
+        self,
+        req_id: str,
+        bucket_open_ms: int,
+        bucket_close_ms: int,
+        lookback_minutes: int,
+        published_1m: int,
+        skipped_1m: int,
+        published_15m: int,
+        skipped_15m: int,
+        state: str,
+        error: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        reconcile = self._snapshot.get("reconcile")
+        if not isinstance(reconcile, dict):
+            reconcile = {
+                "last_run_ts_ms": 0,
+                "last_req_id": "",
+                "last_end_ms": 0,
+                "bucket_open_ms": 0,
+                "bucket_close_ms": 0,
+                "lookback_minutes": 0,
+                "published_1m": 0,
+                "skipped_1m": 0,
+                "published_15m": 0,
+                "skipped_15m": 0,
+                "state": "idle",
+                "last_error": None,
+            }
+        reconcile["last_run_ts_ms"] = _now_ms()
+        reconcile["last_req_id"] = str(req_id)
+        if "last_end_ms" not in reconcile:
+            reconcile["last_end_ms"] = 0
+        reconcile["bucket_open_ms"] = int(bucket_open_ms)
+        reconcile["bucket_close_ms"] = int(bucket_close_ms)
+        reconcile["lookback_minutes"] = int(lookback_minutes)
+        reconcile["published_1m"] = int(published_1m)
+        reconcile["skipped_1m"] = int(skipped_1m)
+        reconcile["published_15m"] = int(published_15m)
+        reconcile["skipped_15m"] = int(skipped_15m)
+        reconcile["state"] = str(state)
+        if error is None:
+            reconcile["last_error"] = None
+        else:
+            err_obj = dict(error)
+            reconcile["last_error"] = err_obj
+            code = str(err_obj.get("code") or "reconcile_error")
+            message = str(err_obj.get("message") or "reconcile error")
+            self.append_error(
+                code=code,
+                severity="error",
+                message=message,
+                context={"scope": "reconcile"},
+            )
+            self.mark_degraded(code)
+        self._snapshot["reconcile"] = reconcile
+
+    def get_reconcile_last_end_ms(self) -> int:
+        reconcile = self._snapshot.get("reconcile")
+        if not isinstance(reconcile, dict):
+            return 0
+        return int(reconcile.get("last_end_ms", 0))
+
+    def record_reconcile_trigger(self, end_ms: int) -> None:
+        reconcile = self._snapshot.get("reconcile")
+        if not isinstance(reconcile, dict):
+            reconcile = {
+                "last_run_ts_ms": 0,
+                "last_req_id": "",
+                "last_end_ms": 0,
+                "bucket_open_ms": 0,
+                "bucket_close_ms": 0,
+                "lookback_minutes": 0,
+                "published_1m": 0,
+                "skipped_1m": 0,
+                "published_15m": 0,
+                "skipped_15m": 0,
+                "state": "idle",
+                "last_error": None,
+            }
+        reconcile["last_end_ms"] = int(end_ms)
+        self._snapshot["reconcile"] = reconcile
+
+    def record_bootstrap_step(
+        self,
+        step: str,
+        state: str,
+        error: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        bootstrap = self._snapshot.get("bootstrap")
+        if not isinstance(bootstrap, dict):
+            bootstrap = {
+                "state": "idle",
+                "step": "",
+                "last_step_ts_ms": 0,
+                "steps": [],
+                "last_error": None,
+            }
+        bootstrap["state"] = str(state)
+        bootstrap["step"] = str(step)
+        bootstrap["last_step_ts_ms"] = _now_ms()
+        steps = bootstrap.get("steps")
+        if not isinstance(steps, list):
+            steps = []
+        steps.append({"step": str(step), "state": str(state), "ts": int(bootstrap["last_step_ts_ms"])})
+        bootstrap["steps"] = steps
+        if error is None:
+            bootstrap["last_error"] = None
+        else:
+            err_obj = dict(error)
+            bootstrap["last_error"] = err_obj
+            code = str(err_obj.get("code") or "bootstrap_error")
+            message = str(err_obj.get("message") or "bootstrap error")
+            self.append_error(
+                code=code,
+                severity="error",
+                message=message,
+                context={"step": str(step)},
+            )
+            self.mark_degraded(code)
+        self._snapshot["bootstrap"] = bootstrap
 
     def update_command_bus_heartbeat(self, channel: str, ts_ms: Optional[int] = None) -> None:
         command_bus = self._snapshot.get("command_bus")

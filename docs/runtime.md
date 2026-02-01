@@ -54,6 +54,8 @@ Status snapshot включає: process/market/errors/degraded/price/ohlcv/deriv
 
 ## Preview pipeline
 - **PreviewBuilder** будує бари з ticks, кешує та готує payloads (runtime/preview_builder.py#L39-L124).
+- **Gapless Open Carryover**: open нового бару = попередній close (узгоджено з ForexConnect PREVIOUS_CLOSE).
+- Обсяг у preview = `tick_count` (не історичний volume).
 - Публікація preview у {NS}:ohlcv і оновлення status (app/main.py#L321-L350; runtime/status.py#L234-L280).
 - E2E smoke test: tick → status → preview без FXCM SDK (tests/test_e2e_tick_to_preview_smoke.py).
 
@@ -62,6 +64,8 @@ Status snapshot включає: process/market/errors/degraded/price/ohlcv/deriv
 - **Rebuild HTF** агрегує 1m у 15m/1h/4h/1d (runtime/rebuild_derived.py#L25-L250).
 - **Republish** публікує final OHLCV з watermark TTL (runtime/republish.py#L15-L79).
 - **Tail Guard** контролює пропуски та repair/republish (runtime/tail_guard.py#L34-L140).
+- Не публікуємо tick‑agg як final і не змішуємо його з history; **наразі не реалізовано** короткий history‑poll наприкінці хвилини — це ціль/план для швидкої публікації complete=true зі справжнім обсягом.
+- Якщо робите власну агрегацію історії у FileCache — застосовуйте open carryover (open нового бару = попередній close).
 
 ## Зберігання (SQLite)
 - Таблиці final 1m та HTF з інваріантами (store/schema.sql#L1-L70).

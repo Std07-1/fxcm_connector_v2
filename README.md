@@ -9,6 +9,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 
 - **Live preview OHLCV** (1m + HTF) з жорсткими рейками часу/сортування/дедуп.
 - **SSOT final 1m** у FileCache (CSV + meta.json) з інваріантами.
+- **Reconcile finalization (P10.B)**: history tail → final 1m (history) + final 15m (history_agg) через fxcm_reconcile_tail (опційний auto на 15m close).
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
 - **Status pubsub** — degraded‑but‑loud: при overflow публікується compact payload.
 - **Status heartbeat** — cadence керується SSOT: `status_publish_period_ms`, `status_fresh_warn_ms`.
@@ -159,7 +160,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- Public Surface.md              # поверхня доступу
 |   |-- audit_v6_public_surface.md     # аудит поверхні
 |   `-- ...                            # решта аудитів/специфікацій
-|-- fxcm/                              # FXCM історичні провайдери/стаби
+|-- fxcm/                              # АРХІВ/МЕРТВИЙ: legacy FXCM провайдери/стаби
 |   `-- history_fxcm_provider.py       # legacy/unused заглушка FXCM history
 |-- History/                           # legacy історичні артефакти (локальні)
 |-- observability/                     # метрики
@@ -180,6 +181,7 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 |   |-- preview_builder.py             # thin wrapper над core preview builder
 |   |-- tail_guard.py                  # tail_guard (1m через FileCache, repair + republish)
 |   |-- republish.py                   # republish логіка
+|   |-- reconcile_finalizer.py         # reconcile finalization (history -> final 1m/15m)
 |   |-- backfill.py                    # backfill логіка
 |   |-- warmup.py                      # warmup логіка
 |   |-- no_mix.py                      # rails на мікс потоків

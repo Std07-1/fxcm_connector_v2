@@ -71,7 +71,7 @@
 |   |-- audit_v6_public_surface.md     # аудит поверхні
 |   |-- evidence/                      # архів доказів/вхідних даних
 |   `-- ...                            # решта аудитів/специфікацій
-|-- fxcm/                              # FXCM історичні провайдери/стаби
+|-- fxcm/                              # АРХІВ/МЕРТВИЙ: legacy FXCM провайдери/стаби
 |   `-- history_fxcm_provider.py       # legacy/unused заглушка FXCM history
 |-- History/                           # legacy історичні артефакти (локальні)
 |-- observability/                     # метрики
@@ -92,6 +92,7 @@
 |   |-- preview_builder.py             # thin wrapper над core preview builder
 |   |-- tail_guard.py                  # tail_guard (1m через FileCache, repair + republish)
 |   |-- republish.py                   # republish логіка
+|   |-- reconcile_finalizer.py         # reconcile finalization (history -> final 1m/15m)
 |   |-- backfill.py                    # backfill логіка
 |   |-- warmup.py                      # warmup логіка
 |   |-- no_mix.py                      # rails на мікс потоків

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import redis
 
@@ -26,6 +27,7 @@ from runtime.no_mix import NoMixDetector
 from runtime.ohlcv_preview import PreviewCandleBuilder, select_closed_bars_for_archive
 from runtime.preview_builder import OhlcvCache
 from runtime.publisher import RedisPublisher
+from runtime.reconcile_finalizer import reconcile_final_tail
 from runtime.replay_ticks import ReplayTickHandle, ReplayTickStream
 from runtime.republish import republish_tail
 from runtime.status import StatusManager
@@ -69,6 +71,72 @@ def _ensure_no_sim(config: Config) -> None:
 def _ensure_tick_mode(config: Config) -> None:
     if config.tick_mode == "fxcm" and config.fxcm_backend != "forexconnect":
         raise SystemExit("tick_mode=fxcm потребує fxcm_backend=forexconnect")
+
+
+def _is_15m_boundary(close_time_ms: int) -> bool:
+    if close_time_ms <= 0:
+        return False
+    return (int(close_time_ms) + 1) % TF_TO_MS["15m"] == 0
+
+
+def _build_reconcile_command_payload(symbols: List[str], end_ms: int, ts_ms: int, req_id: str) -> Dict[str, Any]:
+    return {
+        "cmd": "fxcm_reconcile_tail",
+        "req_id": str(req_id),
+        "ts": int(ts_ms),
+        "args": {
+            "symbols": list(symbols),
+            "end_ms": int(end_ms),
+        },
+    }
+
+
+def _publish_reconcile_command(
+    *,
+    redis_client: Optional[Any],
+    config: Config,
+    validator: SchemaValidator,
+    status: StatusManager,
+    end_ms: int,
+) -> bool:
+    if not config.reconcile_enable:
+        return False
+    if not _is_15m_boundary(int(end_ms)):
+        return False
+    last_end_ms = status.get_reconcile_last_end_ms()
+    if int(last_end_ms) == int(end_ms):
+        return False
+    if redis_client is None:
+        status.append_error(
+            code="reconcile_command_publish_error",
+            severity="error",
+            message="Redis недоступний для publish reconcile",
+            context={"end_ms": int(end_ms)},
+        )
+        status.mark_degraded("reconcile_command_publish_error")
+        return False
+    ts_ms = int(time.time() * 1000)
+    payload = _build_reconcile_command_payload(
+        symbols=list(config.reconcile_active_symbols),
+        end_ms=int(end_ms),
+        ts_ms=ts_ms,
+        req_id=f"auto_reconcile:{int(end_ms)}",
+    )
+    try:
+        validator.validate_commands_v1(payload)
+        json_str = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        redis_client.publish(config.ch_commands(), json_str)
+        status.record_reconcile_trigger(int(end_ms))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        status.append_error(
+            code="reconcile_command_publish_error",
+            severity="error",
+            message=str(exc),
+            context={"end_ms": int(end_ms)},
+        )
+        status.mark_degraded("reconcile_command_publish_error")
+        return False
 
 
 def build_history_provider_for_runtime(
@@ -203,6 +271,17 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     def _publish_final_tail(symbol: str, window_hours: int) -> None:
         if file_cache is None:
             return
+        _rows, meta = file_cache.load(symbol, "1m")
+        last_write_source = str(meta.get("last_write_source", ""))
+        if last_write_source in {"stream", "stream_close"}:
+            status.append_error(
+                code="final_source_invalid",
+                severity="error",
+                message="final publish заборонено: cache має stream/stream_close як last_write_source",
+                context={"symbol": symbol, "last_write_source": last_write_source},
+            )
+            status.mark_degraded("final_source_invalid")
+            raise ContractError("final_source_invalid")
         end_ms = int(time.time() * 1000)
         start_ms = end_ms - window_hours * 60 * 60 * 1000
         bars = file_cache.query(
@@ -396,11 +475,154 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
         )
         status.publish_snapshot()
 
+    def _handle_reconcile_tail(payload: dict) -> None:
+        if not config.reconcile_enable:
+            raise ValueError("reconcile вимкнений у конфігу")
+        if file_cache is None:
+            raise ValueError("cache вимкнений: reconcile неможливий")
+        args = payload.get("args", {})
+        symbols = args.get("symbols") or args.get("symbol") or config.reconcile_active_symbols
+        if isinstance(symbols, str):
+            symbols = [symbols]
+        if not isinstance(symbols, list) or not symbols:
+            raise ValueError("symbols має бути list[str] або str")
+        provider_name = str(args.get("provider", ""))
+        provider = _select_provider(provider_name)
+        lookback_minutes = int(args.get("lookback_minutes", config.reconcile_lookback_minutes_default))
+        end_ms = int(args.get("end_ms", 0))
+        close_ms = int(args.get("close_ms", 0))
+        target_close_ms = end_ms if end_ms > 0 else (close_ms if close_ms > 0 else None)
+        for symbol in symbols:
+            reconcile_final_tail(
+                config=config,
+                file_cache=file_cache,
+                provider=provider,
+                publisher=publisher,
+                validator=validator,
+                status=status,
+                metrics=metrics,
+                symbol=str(symbol),
+                lookback_minutes=lookback_minutes,
+                req_id=str(payload.get("req_id", "")),
+                target_close_ms=target_close_ms,
+            )
+        status.publish_snapshot()
+
+    def _handle_bootstrap(payload: dict) -> None:
+        if not config.bootstrap_enable:
+            raise ValueError("bootstrap вимкнений у конфігу")
+        if file_cache is None:
+            raise ValueError("cache вимкнений: bootstrap неможливий")
+        args = payload.get("args", {}) if isinstance(payload, dict) else {}
+        current_step = "bootstrap"
+        log.info("bootstrap start req_id=%s", str(payload.get("req_id", "")))
+        status.record_bootstrap_step(step="bootstrap", state="running")
+        try:
+            warmup_args = args.get("warmup") if isinstance(args, dict) else None
+            warmup_symbols: list = []
+            if isinstance(warmup_args, dict):
+                current_step = "warmup"
+                log.info("bootstrap step=warmup start")
+                status.record_bootstrap_step(step=current_step, state="running")
+                warmup_payload = {"args": warmup_args}
+                warmup_symbols = warmup_args.get("symbols", []) if isinstance(warmup_args.get("symbols"), list) else []
+                handle_warmup_command(
+                    payload=warmup_payload,
+                    config=config,
+                    file_cache=file_cache,
+                    provider=_select_provider(str(warmup_args.get("provider", ""))),
+                    status=status,
+                    metrics=metrics,
+                    publish_tail=_publish_final_tail,
+                    rebuild_callback=None,
+                )
+                status.record_bootstrap_step(step=current_step, state="ok")
+                log.info("bootstrap step=warmup ok")
+
+            backfill_args = args.get("backfill") if isinstance(args, dict) else None
+            if isinstance(backfill_args, dict):
+                current_step = "backfill"
+                log.info("bootstrap step=backfill start")
+                status.record_bootstrap_step(step=current_step, state="running")
+                backfill_payload = {"args": backfill_args}
+                handle_backfill_command(
+                    payload=backfill_payload,
+                    config=config,
+                    file_cache=file_cache,
+                    provider=_select_provider(str(backfill_args.get("provider", ""))),
+                    status=status,
+                    metrics=metrics,
+                    publish_tail=_publish_final_tail,
+                    rebuild_callback=None,
+                )
+                status.record_bootstrap_step(step=current_step, state="ok")
+                log.info("bootstrap step=backfill ok")
+
+            if config.bootstrap_republish_after_backfill:
+                current_step = "republish_tail"
+                log.info("bootstrap step=republish_tail start")
+                status.record_bootstrap_step(step=current_step, state="running")
+                republish_args = args.get("republish_tail", {}) if isinstance(args, dict) else {}
+                symbol = str(
+                    republish_args.get("symbol")
+                    or (backfill_args.get("symbol") if isinstance(backfill_args, dict) else "")
+                    or (warmup_symbols[0] if warmup_symbols else "")
+                )
+                if not symbol:
+                    raise ValueError("republish_tail потребує symbol (args.republish_tail.symbol або backfill.symbol)")
+                timeframes = republish_args.get("timeframes", ["1m"])
+                if not isinstance(timeframes, list) or not timeframes:
+                    raise ValueError("timeframes має бути list[str] для republish_tail")
+                window_hours = int(republish_args.get("window_hours", config.republish_tail_window_hours_default))
+                force = bool(republish_args.get("force", False))
+                republish_tail(
+                    config=config,
+                    file_cache=file_cache,
+                    redis_client=redis_client,
+                    publisher=publisher,
+                    validator=validator,
+                    status=status,
+                    metrics=metrics,
+                    symbol=symbol,
+                    timeframes=timeframes,
+                    window_hours=window_hours,
+                    force=force,
+                    req_id=str(payload.get("req_id", "")),
+                )
+                status.record_bootstrap_step(step=current_step, state="ok")
+                log.info("bootstrap step=republish_tail ok")
+
+            if config.bootstrap_tail_guard_after:
+                current_step = "tail_guard"
+                log.info("bootstrap step=tail_guard start")
+                status.record_bootstrap_step(step=current_step, state="running")
+                tail_guard_args = args.get("tail_guard") if isinstance(args, dict) else None
+                if not isinstance(tail_guard_args, dict):
+                    raise ValueError("tail_guard args обов'язкові при bootstrap_tail_guard_after=true")
+                _handle_tail_guard({"args": tail_guard_args, "req_id": str(payload.get("req_id", ""))})
+                status.record_bootstrap_step(step=current_step, state="ok")
+                log.info("bootstrap step=tail_guard ok")
+
+            status.record_bootstrap_step(step="bootstrap", state="ok")
+            log.info("bootstrap ok")
+        except Exception as exc:  # noqa: BLE001
+            status.record_bootstrap_step(
+                step=current_step,
+                state="error",
+                error={"code": "bootstrap_error", "message": str(exc), "ts": int(time.time() * 1000)},
+            )
+            log.error("bootstrap error step=%s err=%s", current_step, str(exc))
+            raise
+        finally:
+            status.publish_snapshot()
+
     handlers = {
         "fxcm_warmup": _handle_warmup,
         "fxcm_backfill": _handle_backfill,
         "fxcm_tail_guard": _handle_tail_guard,
         "fxcm_republish_tail": _handle_republish_tail,
+        "fxcm_reconcile_tail": _handle_reconcile_tail,
+        "fxcm_bootstrap": _handle_bootstrap,
     }
     command_bus = CommandBus(
         redis_client=redis_client,
@@ -541,6 +763,16 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
                                     context={"symbol": symbol, "tf": "1m"},
                                 )
                                 status.mark_degraded("cache_write_failed")
+                        if config.reconcile_auto_enable and config.reconcile_enable:
+                            for bar in closed_bars:
+                                end_ms = int(bar.get("close_time") or 0)
+                                _publish_reconcile_command(
+                                    redis_client=redis_client,
+                                    config=config,
+                                    validator=validator,
+                                    status=status,
+                                    end_ms=end_ms,
+                                )
                     last_open = int(bars[-1]["open_time"])
                     status.record_ohlcv_publish(
                         tf=str(payload.get("tf")),

@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 
 def generate_1m_history(symbol: str, start_ms: int, end_ms: int) -> List[Dict[str, Any]]:
-    """Генерує детерміновані 1m final бари для stub-історії (P3)."""
+    """АРХІВ/МЕРТВИЙ: детерміновані 1m final бари для stub-історії (P3)."""
 
     bars: List[Dict[str, Any]] = []
     step = 60_000

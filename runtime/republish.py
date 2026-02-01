@@ -43,6 +43,7 @@ def republish_tail(
         raise ValueError("Redis недоступний для watermark")
 
     for tf in timeframes:
+        final_source = _ensure_final_source_allowed(file_cache=file_cache, symbol=symbol, tf=tf, status=status)
         key = f"{config.ns}:internal:republish_watermark:{symbol}:{tf}:{window_hours}"
         mark_val = redis_client.get(key)
         if mark_val is not None and not force:
@@ -52,7 +53,7 @@ def republish_tail(
                 metrics.republish_skipped_total.labels(tf=tf).inc()
             continue
 
-        bars = _load_tail(file_cache, symbol, tf, window_hours)
+        bars = _load_tail(file_cache, symbol, tf, window_hours, final_source)
         if bars:
             published_batches += _publish_bars(
                 config=config,
@@ -81,7 +82,7 @@ def republish_tail(
     )
 
 
-def _load_tail(file_cache: FileCache, symbol: str, tf: str, window_hours: int) -> List[dict]:
+def _load_tail(file_cache: FileCache, symbol: str, tf: str, window_hours: int, source: str) -> List[dict]:
     size = TF_TO_MS.get(tf)
     if size is None:
         return []
@@ -98,7 +99,7 @@ def _load_tail(file_cache: FileCache, symbol: str, tf: str, window_hours: int) -
             "volume": float(r["volume"]),
             "complete": True,
             "synthetic": False,
-            "source": "cache",
+            "source": source,
             "event_ts": int(r["close_time_ms"]),
         }
         for r in rows
@@ -119,17 +120,63 @@ def _publish_bars(
     batches = 0
     for i in range(0, len(bars), max_bars):
         chunk = bars[i : i + max_bars]
-        payload = {
-            "symbol": symbol,
-            "tf": tf,
-            "source": chunk[0]["source"],
-            "complete": True,
-            "synthetic": False,
-            "bars": chunk,
-        }
         try:
-            publisher.publish_ohlcv(config.ch_ohlcv(), payload, validator, max_bars)
+            if tf == "1m":
+                publisher.publish_ohlcv_final_1m(
+                    symbol=symbol,
+                    bars=chunk,
+                    validator=validator,
+                )
+            else:
+                publisher.publish_ohlcv_final_htf(
+                    symbol=symbol,
+                    tf=tf,
+                    bars=chunk,
+                    validator=validator,
+                )
         except ContractError as exc:
             raise ContractError(f"republish: {exc}")
         batches += 1
     return batches
+
+
+def _ensure_final_source_allowed(file_cache: FileCache, symbol: str, tf: str, status: StatusManager) -> str:
+    _rows, meta = file_cache.load(symbol, tf)
+    last_write_source = str(meta.get("last_write_source", ""))
+    if last_write_source in {"stream", "stream_close", "", "none"}:
+        status.append_error(
+            code="republish_source_invalid",
+            severity="error",
+            message="republish_tail заборонено: cache має stream/stream_close як last_write_source",
+            context={"symbol": symbol, "tf": tf, "last_write_source": last_write_source},
+        )
+        status.mark_degraded("republish_source_invalid")
+        raise ContractError("republish_source_invalid")
+    if last_write_source not in {"history", "history_agg"}:
+        status.append_error(
+            code="republish_source_invalid",
+            severity="error",
+            message="republish_tail заборонено: last_write_source не з FINAL_SOURCES",
+            context={"symbol": symbol, "tf": tf, "last_write_source": last_write_source},
+        )
+        status.mark_degraded("republish_source_invalid")
+        raise ContractError("republish_source_invalid")
+    if tf == "1m" and last_write_source != "history":
+        status.append_error(
+            code="republish_source_invalid",
+            severity="error",
+            message="republish_tail заборонено: 1m має history",
+            context={"symbol": symbol, "tf": tf, "last_write_source": last_write_source},
+        )
+        status.mark_degraded("republish_source_invalid")
+        raise ContractError("republish_source_invalid")
+    if tf != "1m" and last_write_source != "history_agg":
+        status.append_error(
+            code="republish_source_invalid",
+            severity="error",
+            message="republish_tail заборонено: HTF має history_agg",
+            context={"symbol": symbol, "tf": tf, "last_write_source": last_write_source},
+        )
+        status.mark_degraded("republish_source_invalid")
+        raise ContractError("republish_source_invalid")
+    return last_write_source

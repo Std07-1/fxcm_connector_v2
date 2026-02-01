@@ -95,6 +95,39 @@
                 "tick_err_total": { "type": "integer", "minimum": 0 }
             }
         },
+            "bootstrap": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["state", "step", "last_step_ts_ms", "steps", "last_error"],
+                "properties": {
+                    "state": { "type": "string", "minLength": 1 },
+                    "step": { "type": "string" },
+                    "last_step_ts_ms": { "type": "integer", "minimum": 0 },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["step", "state", "ts"],
+                            "properties": {
+                                "step": { "type": "string", "minLength": 1 },
+                                "state": { "type": "string", "minLength": 1 },
+                                "ts": { "type": "integer", "minimum": 0 }
+                            }
+                        }
+                    },
+                    "last_error": {
+                        "type": ["object", "null"],
+                        "additionalProperties": false,
+                        "required": ["code", "message", "ts"],
+                        "properties": {
+                            "code": { "type": "string", "minLength": 1 },
+                            "message": { "type": "string", "minLength": 1 },
+                            "ts": { "type": "integer", "minimum": 0 }
+                        }
+                    }
+                }
+            },
 
         "fxcm": {
             "type": "object",
@@ -379,6 +412,48 @@
                 "forced": { "type": "boolean" },
                 "published_batches": { "type": "integer", "minimum": 0 },
                 "state": { "type": "string", "minLength": 1 }
+            }
+        },
+
+        "reconcile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "last_run_ts_ms",
+                "last_req_id",
+                "last_end_ms",
+                "bucket_open_ms",
+                "bucket_close_ms",
+                "lookback_minutes",
+                "published_1m",
+                "skipped_1m",
+                "published_15m",
+                "skipped_15m",
+                "state",
+                "last_error"
+            ],
+            "properties": {
+                "last_run_ts_ms": { "type": "integer", "minimum": 0 },
+                "last_req_id": { "type": "string" },
+                "last_end_ms": { "type": "integer", "minimum": 0 },
+                "bucket_open_ms": { "type": "integer", "minimum": 0 },
+                "bucket_close_ms": { "type": "integer", "minimum": 0 },
+                "lookback_minutes": { "type": "integer", "minimum": 0 },
+                "published_1m": { "type": "integer", "minimum": 0 },
+                "skipped_1m": { "type": "integer", "minimum": 0 },
+                "published_15m": { "type": "integer", "minimum": 0 },
+                "skipped_15m": { "type": "integer", "minimum": 0 },
+                "state": { "type": "string", "minLength": 1 },
+                "last_error": {
+                    "type": ["object", "null"],
+                    "additionalProperties": false,
+                    "required": ["code", "message", "ts"],
+                    "properties": {
+                        "code": { "type": "string", "minLength": 1 },
+                        "message": { "type": "string", "minLength": 1 },
+                        "ts": { "type": "integer", "minimum": 0 }
+                    }
+                }
             }
         },
 

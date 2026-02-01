@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from typing import Any, Callable, Dict, Mapping, Optional, Set
@@ -209,6 +210,8 @@ class CommandBus:
         req_id = str(payload.get("req_id"))
         started_ts = int(payload.get("ts", 0))
 
+        log = logging.getLogger("command_bus")
+
         if cmd not in self._allowlist:
             self._status.append_error(
                 code="unknown_command",
@@ -231,12 +234,14 @@ class CommandBus:
                 context={"cmd": cmd},
             )
             self._status.set_last_command_error(cmd, req_id, started_ts)
+            log.info("COMMAND end cmd=%s req_id=%s state=error", cmd, req_id)
             self._status.publish_snapshot()
             if self._metrics is not None:
                 self._metrics.commands_total.labels(cmd=cmd, state="error").inc()
             return
 
         self._status.set_last_command_running(cmd, req_id, started_ts)
+        log.info("COMMAND start cmd=%s req_id=%s", cmd, req_id)
         try:
             handler(payload)
         except ProviderNotConfiguredError as exc:
@@ -249,6 +254,7 @@ class CommandBus:
             if self._metrics is not None:
                 self._metrics.commands_total.labels(cmd=cmd, state="error").inc()
             self._status.publish_snapshot()
+            log.info("COMMAND end cmd=%s req_id=%s state=error", cmd, req_id)
             raise SystemExit(str(exc))
         except ValueError as exc:
             self._status.append_error(
@@ -259,6 +265,7 @@ class CommandBus:
             self._status.set_last_command_error(cmd, req_id, started_ts)
             if self._metrics is not None:
                 self._metrics.commands_total.labels(cmd=cmd, state="error").inc()
+            log.info("COMMAND end cmd=%s req_id=%s state=error", cmd, req_id)
         except Exception as exc:
             self._status.append_error(
                 code="command_error",
@@ -268,8 +275,10 @@ class CommandBus:
             self._status.set_last_command_error(cmd, req_id, started_ts)
             if self._metrics is not None:
                 self._metrics.commands_total.labels(cmd=cmd, state="error").inc()
+            log.info("COMMAND end cmd=%s req_id=%s state=error", cmd, req_id)
         else:
             self._status.set_last_command_ok(cmd, req_id, started_ts)
             if self._metrics is not None:
                 self._metrics.commands_total.labels(cmd=cmd, state="ok").inc()
+            log.info("COMMAND end cmd=%s req_id=%s state=ok", cmd, req_id)
         self._status.publish_snapshot()
