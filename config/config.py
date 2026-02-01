@@ -273,10 +273,10 @@ def load_config(profile: Optional[str] = None) -> Config:
     overrides = _load_profile_overrides(profile_val)
     if "ns" in overrides and "ns" in env_overrides and overrides["ns"] != env_overrides["ns"]:
         raise ValueError("NS має задаватися одним способом: profile або FXCM_CHANNEL_PREFIX")
+    merged_overrides = {**env_overrides, **overrides}
     cfg = replace(
         base,
-        **env_overrides,
-        **overrides,
+        **merged_overrides,
         fxcm_username=os.environ.get("FXCM_USERNAME", base.fxcm_username),
         fxcm_password=os.environ.get("FXCM_PASSWORD", base.fxcm_password),
     )

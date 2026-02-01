@@ -11,7 +11,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - **SSOT final 1m** у FileCache (CSV + meta.json) з інваріантами.
 - **Reconcile finalization (P10.B)**: history tail → final 1m (history) + final 15m (history_agg) через fxcm_reconcile_tail (опційний auto на 15m close).
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
-- **Command bus rails**: `max_command_payload_bytes` + редактинг errors + rate‑limit/coalesce/collapse + HMAC auth (default OFF).
+- **Command bus rails**: `max_command_payload_bytes` + редактинг errors + rate‑limit/coalesce/collapse + HMAC auth (керуються профілями `profile_local.py`/`profile_prod.py`).
 - **Status pubsub** — degraded‑but‑loud: при overflow публікується compact payload.
 - **Status heartbeat** — cadence керується SSOT: `status_publish_period_ms`, `status_fresh_warn_ms`.
 - **FXCM event ahead** — лічильник `fxcm_event_ahead_total{symbol}`; попередження throttle ≤ 1/60с на символ.
@@ -53,7 +53,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - Redis.
 - .env використовується лише як перемикач профілю (AI_ONE_ENV_FILE).
 - Секрети тільки у .env.local/.env.prod (логін/пароль FXCM, токени).
-- tick_mode=fxcm потребує fxcm_backend=forexconnect (fail-fast).
+- tick_mode=fxcm потребує fxcm_backend=forexconnect (fail-fast); у профілях local/prod для fxcm_backend=disabled виставлено tick_mode=off.
 
 ## Швидкий старт (local)
 
@@ -97,8 +97,8 @@ Runbook: docs/runbooks/redis_acl.md — ACL для UI/SMC/connector з розм�
 - config/calendar_overrides.json — SSOT календар (NY recurrence + профілі, XAU 23:01 UTC).
 - docs/Public API Spec (SSOT).md — нормативні правила Public API.
 - max_command_payload_bytes — ліміт розміру payload команди (bytes), fast‑drop до json parse.
-- command_rate_limit_enable / command_coalesce_enable / command_heavy_collapse_enable — anti‑spam рейки команд (default OFF).
-- command_auth_enable / command_auth_required — rolling HMAC auth (default OFF).
+- command_rate_limit_enable / command_coalesce_enable / command_heavy_collapse_enable — anti‑spam рейки команд (керуються профілями).
+- command_auth_enable / command_auth_required — rolling HMAC auth (керуються профілями).
 
 ## Поточна карта REPO_LAYOUT (актуальна)
 

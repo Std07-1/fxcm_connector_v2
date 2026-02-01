@@ -33,6 +33,8 @@
 |-- config/                            # SSOT конфіг
 |   |-- config.py                      # основний конфіг та канали (history_provider_kind)
 |   |-- calendar_overrides.json        # SSOT календарні overrides (weekly schedule + closed_intervals_utc)
+|   |-- profile_local.py               # локальний профіль (несекретні параметри)
+|   |-- profile_prod.py                # прод профіль (несекретні параметри)
 |   |-- profile_template.py            # шаблон профілю
 |   `-- secrets_template.py            # шаблон секретів
 |-- core/                              # доменна SSOT логіка
@@ -70,7 +72,7 @@
 |   |-- Public API Spec (SSOT).md      # SSOT API
 |   |-- Public Surface.md              # поверхня доступу
 |   |-- audit_v6_public_surface.md     # аудит поверхні
-|   |-- runbooks/                       # операційні runbook
+|   |-- runbooks/                       # операційні runbook (включно mvp_parity_plan.md)
 |   |-- evidence/                      # архів доказів/вхідних даних
 |   `-- ...                            # решта аудитів/специфікацій
 |-- fxcm/                              # АРХІВ/МЕРТВИЙ: legacy FXCM провайдери/стаби
