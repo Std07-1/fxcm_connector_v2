@@ -5,11 +5,24 @@ import time
 from typing import Callable, List, Optional
 
 from config.config import Config
+from core.time.buckets import bucket_close_ms
 from observability.metrics import Metrics
 from runtime.fxcm.history_provider import FxcmForexConnectHistoryAdapter, FxcmHistoryProvider
 from runtime.history_provider import HistoryProvider, guard_history_ready
 from runtime.status import StatusManager
 from store.file_cache import FileCache
+
+
+def _resolve_history_end_ms(now_ms: int, status: StatusManager) -> int:
+    safety_lag_ms = 2 * 60_000
+    safe_now = max(0, int(now_ms) - int(safety_lag_ms))
+    calendar = status.calendar
+    if calendar is None or calendar.health_error():
+        return bucket_close_ms(safe_now, "1m")
+    if calendar.is_open(now_ms):
+        return bucket_close_ms(safe_now, "1m")
+    last_close = calendar.last_trading_close_ms(now_ms)
+    return bucket_close_ms(int(last_close), "1m")
 
 
 def run_warmup(
@@ -24,7 +37,7 @@ def run_warmup(
 ) -> None:
     log = logging.getLogger("warmup")
     real_now_ms = int(time.time() * 1000)
-    end_close_ms = real_now_ms - (real_now_ms % 60_000) - 1
+    end_close_ms = _resolve_history_end_ms(real_now_ms, status)
     now_ms = end_close_ms
     start_ms = end_close_ms - lookback_days * 24 * 60 * 60 * 1000
     chunk_ms = config.history_chunk_minutes * 60 * 1000

@@ -108,6 +108,28 @@ class Calendar:
             return ts_ms
         return self._calendar.next_trading_pause_ms(ts_ms)
 
+    def last_trading_close_ms(self, ts_ms: int, symbol: Optional[str] = None) -> int:
+        if self._init_error:
+            return ts_ms
+        if self.is_open(ts_ms, symbol=symbol):
+            return int(self._calendar.next_trading_pause_ms(ts_ms)) - 1
+        dt_utc = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        dt_local = dt_utc.astimezone(self._calendar._tz)
+        for day_offset in range(0, 8):
+            day = dt_local.date() - timedelta(days=day_offset)
+            intervals = self._calendar._open_intervals_for_date(day)
+            if not intervals:
+                continue
+            if day_offset == 0:
+                ends = [end for _start, end in intervals if end <= dt_local]
+                if not ends:
+                    continue
+                end_dt = max(ends)
+            else:
+                end_dt = max(end for _start, end in intervals)
+            return int(end_dt.astimezone(timezone.utc).timestamp() * 1000) - 1
+        return ts_ms
+
     def explain(self, ts_ms: int, symbol: Optional[str] = None) -> List[str]:
         if self._init_error:
             return ["calendar_error"]

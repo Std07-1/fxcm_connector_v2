@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from hashlib import sha256
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Deque, Dict, Optional, Set, Tuple
@@ -22,6 +24,7 @@ from core.time.buckets import TF_TO_MS, get_bucket_open_ms
 from core.time.calendar import Calendar
 from core.time.sessions import _to_utc_iso
 from core.validation.validator import ContractError, SchemaValidator
+from runtime.command_auth import _canonical_payload, _resolve_secrets
 
 log = logging.getLogger("ui_lite")
 if not logging.getLogger().handlers:
@@ -271,6 +274,34 @@ def _process_request(path: str, _headers: Any) -> Optional[HTTPResponse]:
         return HTTPStatus.INTERNAL_SERVER_ERROR, headers, msg
 
 
+def _sign_command_payload(payload: Dict[str, Any], config: Config) -> Tuple[bool, str, Dict[str, Any]]:
+    secrets, default_kid = _resolve_secrets(config)
+    kid = str(payload.get("auth_kid", "")).strip() or str(default_kid or "").strip()
+    if not kid:
+        return False, "auth_secret_missing", {}
+    secret = secrets.get(kid, "")
+    if not secret:
+        return False, "auth_secret_missing", {}
+    nonce = str(payload.get("req_id", "")).strip() or f"ui-{int(time.time() * 1000)}"
+    canonical = _canonical_payload(payload, kid=kid, nonce=nonce)
+    sig = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), sha256).hexdigest()
+    signed = dict(payload)
+    signed["auth"] = {"kid": kid, "sig": sig, "nonce": nonce}
+    return True, "ok", signed
+
+
+def _publish_command(redis_client: redis.Redis, config: Config, payload: Dict[str, Any]) -> Tuple[bool, str]:
+    try:
+        raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return False, "command_encode_failed"
+    try:
+        redis_client.publish(config.ch_commands(), raw)
+    except Exception:
+        return False, "command_publish_failed"
+    return True, "ok"
+
+
 def _mode_from_payload(payload: Dict[str, Any], bar: Dict[str, Any]) -> str:
     complete = bar.get("complete")
     if complete is None:
@@ -393,6 +424,8 @@ async def _ws_handler(
     websocket: WebSocketServerProtocol,
     clients: Set[WebSocketServerProtocol],
     subs: Dict[WebSocketServerProtocol, Dict[str, Any]],
+    config: Config,
+    redis_client: redis.Redis,
 ) -> None:
     clients.add(websocket)
     subs[websocket] = {"symbol": None, "tf": None, "mode": "preview"}
@@ -403,28 +436,60 @@ async def _ws_handler(
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 continue
-            if payload.get("type") != "subscribe":
-                continue
-            symbol, tf, mode, error_payload = _parse_subscribe(payload)
-            if error_payload is not None:
-                await websocket.send(json.dumps(error_payload, ensure_ascii=False, separators=(",", ":")))
+            msg_type = payload.get("type")
+            if msg_type == "subscribe":
+                symbol, tf, mode, error_payload = _parse_subscribe(payload)
+                if error_payload is not None:
+                    await websocket.send(json.dumps(error_payload, ensure_ascii=False, separators=(",", ":")))
+                    with _STATE.lock:
+                        _STATE.ws_tx_total += 1
+                    continue
+                subs[websocket] = {"symbol": symbol, "tf": tf, "mode": mode}
+                log.debug("UI Lite WS subscribe: symbol=%s tf=%s mode=%s", symbol, tf, mode)
+
+                snapshot = _snapshot_for(str(symbol), str(tf), str(mode or "preview"))
+                response = {
+                    "type": "snapshot",
+                    "symbol": symbol,
+                    "tf": tf,
+                    "mode": mode,
+                    "bars": snapshot,
+                }
+                await websocket.send(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
                 with _STATE.lock:
                     _STATE.ws_tx_total += 1
                 continue
-            subs[websocket] = {"symbol": symbol, "tf": tf, "mode": mode}
-            log.debug("UI Lite WS subscribe: symbol=%s tf=%s mode=%s", symbol, tf, mode)
-
-            snapshot = _snapshot_for(str(symbol), str(tf), str(mode or "preview"))
-            response = {
-                "type": "snapshot",
-                "symbol": symbol,
-                "tf": tf,
-                "mode": mode,
-                "bars": snapshot,
-            }
-            await websocket.send(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
-            with _STATE.lock:
-                _STATE.ws_tx_total += 1
+            if msg_type == "command":
+                cmd = str(payload.get("cmd", "")).strip()
+                args = payload.get("args", {})
+                if not cmd:
+                    response = {"type": "command_ack", "ok": False, "error": "missing_cmd"}
+                    await websocket.send(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+                    with _STATE.lock:
+                        _STATE.ws_tx_total += 1
+                    continue
+                if not isinstance(args, dict):
+                    response = {"type": "command_ack", "ok": False, "error": "invalid_args"}
+                    await websocket.send(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+                    with _STATE.lock:
+                        _STATE.ws_tx_total += 1
+                    continue
+                now_ms = int(time.time() * 1000)
+                req_id = str(payload.get("req_id", "")).strip() or f"ui-{now_ms}"
+                base_payload = {"cmd": cmd, "req_id": req_id, "ts": now_ms, "args": args}
+                ok, reason, signed = _sign_command_payload(base_payload, config)
+                if not ok:
+                    response = {"type": "command_ack", "ok": False, "error": reason}
+                    await websocket.send(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+                    with _STATE.lock:
+                        _STATE.ws_tx_total += 1
+                    continue
+                ok, reason = _publish_command(redis_client, config, signed)
+                response = {"type": "command_ack", "ok": ok, "error": None if ok else reason, "req_id": req_id}
+                await websocket.send(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+                with _STATE.lock:
+                    _STATE.ws_tx_total += 1
+                continue
     finally:
         clients.discard(websocket)
         subs.pop(websocket, None)
@@ -1016,7 +1081,7 @@ async def _run_server(config: Config, redis_client: redis.Redis, stop_event: thr
     while not stop_event.is_set():
         try:
             async with serve(
-                lambda ws, _path: _ws_handler(ws, clients, subs),
+                lambda ws, _path: _ws_handler(ws, clients, subs, config, redis_client),
                 host=config.ui_lite_host,
                 port=config.ui_lite_port,
                 process_request=_process_request,  # type: ignore[arg-type]

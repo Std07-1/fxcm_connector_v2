@@ -40,6 +40,17 @@ select, button {
   font-size: 12px;
 }
 
+input {
+  border: 1px solid #2a3140;
+  background: #141821;
+  color: #e6e8ec;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .indicators {
   margin-left: auto;
   font-size: 12px;
@@ -250,4 +261,27 @@ select, button {
   color: #cfd3da;
   display: grid;
   gap: 4px;
+}
+
+.drawer-cmd-controls {
+  display: grid;
+  gap: 8px;
+  font-size: 11px;
+  color: #cfd3da;
+}
+
+.drawer-cmd-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.drawer-cmd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.drawer-cmd-status {
+  font-size: 11px;
+  color: #9aa2af;
 }

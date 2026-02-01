@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "rows": 1247,
-  "last_close_time_ms": 1769983259999,
-  "last_refresh_utc": "2026-02-01T22:45:56Z",
-  "last_stream_heartbeat_utc": "2026-02-01T22:45:56Z",
+  "rows": 4491,
+  "last_close_time_ms": 1769988359999,
+  "last_refresh_utc": "2026-02-01T23:26:00Z",
+  "last_stream_heartbeat_utc": "2026-02-01T23:26:00Z",
   "last_published_open_time_ms": 0,
-  "last_write_source": "history",
+  "last_write_source": "stream_close",
   "symbol": "XAUUSD",
   "tf": "1m"
 }

@@ -64,10 +64,14 @@
 
   const STORAGE_KEY = 'ui_lite_settings_v1';
   const DIAG_KEY = 'ui_lite_diagnostics_mode_v1';
+  const CMD_SETTINGS_KEY = 'ui_lite_command_settings_v1';
   let lastTimeRange = null;
   let pendingTimeRange = null;
   let appliedTimeRange = false;
   let diagnosticsMode = 'inline';
+  let lastCommandAck = null;
+  let lastCommandSentAt = 0;
+  let ws = null;
 
   function _normalizeTimeRange(raw) {
     if (!raw || typeof raw !== 'object') return null;
@@ -86,6 +90,25 @@
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch {
       return {};
+    }
+  }
+
+  function loadCommandSettings() {
+    try {
+      const raw = localStorage.getItem(CMD_SETTINGS_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveCommandSettings(values) {
+    try {
+      localStorage.setItem(CMD_SETTINGS_KEY, JSON.stringify(values || {}));
+    } catch {
+      // ignore
     }
   }
 
@@ -224,6 +247,11 @@
         <div><strong>STATE</strong>: ${_escape(lastCmd.state || '-')}</div>
       </div>
     `;
+    const cmdSettings = loadCommandSettings();
+    const lookbackDays = Number(cmdSettings.lookbackDays || 7);
+    const backfillDays = Number(cmdSettings.backfillDays || 7);
+    const windowHours = Number(cmdSettings.windowHours || 24);
+    const commandStatus = lastCommandAck ? _escape(lastCommandAck) : 'Очікує на команду';
     drawerContentEl.innerHTML = `
       <div class="drawer-section">
         <div class="drawer-title">DEGRADED</div>
@@ -234,10 +262,140 @@
         ${errorsList}
       </div>
       <div class="drawer-section">
+        <div class="drawer-title">КОМАНДИ (локально)</div>
+        <div class="drawer-cmd-controls">
+          <label>Warmup days
+            <input id="cmd-lookback" type="number" min="1" value="${_escape(lookbackDays)}" />
+          </label>
+          <label>Backfill days
+            <input id="cmd-backfill" type="number" min="1" value="${_escape(backfillDays)}" />
+          </label>
+          <label>Window hours
+            <input id="cmd-window" type="number" min="1" value="${_escape(windowHours)}" />
+          </label>
+          <div class="drawer-cmd-actions">
+            <button id="cmd-warmup">Warmup</button>
+            <button id="cmd-backfill">Backfill</button>
+            <button id="cmd-republish">Republish tail</button>
+            <button id="cmd-bootstrap">Bootstrap</button>
+          </div>
+          <div class="drawer-cmd-status" id="cmd-status">${commandStatus}</div>
+        </div>
+      </div>
+      <div class="drawer-section">
         <div class="drawer-title">LAST COMMAND</div>
         ${cmdBlock}
       </div>
     `;
+    _bindCommandControls();
+  }
+
+  function _buildUtcIso(daysBack) {
+    const ms = Date.now() - Number(daysBack) * 24 * 60 * 60 * 1000;
+    return new Date(ms).toISOString().slice(0, 19) + 'Z';
+  }
+
+  function _updateCommandStatus(text) {
+    lastCommandAck = text;
+    const el = document.getElementById('cmd-status');
+    if (el) {
+      el.textContent = text;
+    }
+  }
+
+  function _sendCommand(cmd, args) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      _updateCommandStatus('WS недоступний');
+      return;
+    }
+    lastCommandSentAt = Date.now();
+    _updateCommandStatus(`Відправлено: ${cmd}`);
+    ws.send(JSON.stringify({ type: 'command', cmd, args }));
+  }
+
+  function _bindCommandControls() {
+    const lookbackEl = document.getElementById('cmd-lookback');
+    const backfillEl = document.getElementById('cmd-backfill');
+    const windowEl = document.getElementById('cmd-window');
+    const warmupBtn = document.getElementById('cmd-warmup');
+    const backfillBtn = document.getElementById('cmd-backfill');
+    const republishBtn = document.getElementById('cmd-republish');
+    const bootstrapBtn = document.getElementById('cmd-bootstrap');
+    if (!lookbackEl || !backfillEl || !windowEl) return;
+
+    const persist = () => {
+      saveCommandSettings({
+        lookbackDays: Number(lookbackEl.value || 7),
+        backfillDays: Number(backfillEl.value || 7),
+        windowHours: Number(windowEl.value || 24),
+      });
+    };
+    lookbackEl.addEventListener('change', persist);
+    backfillEl.addEventListener('change', persist);
+    windowEl.addEventListener('change', persist);
+
+    if (warmupBtn) {
+      warmupBtn.addEventListener('click', () => {
+        persist();
+        _sendCommand('fxcm_warmup', {
+          symbols: [currentSymbol()],
+          lookback_days: Number(lookbackEl.value || 7),
+          publish: true,
+          window_hours: Number(windowEl.value || 24),
+        });
+      });
+    }
+    if (backfillBtn) {
+      backfillBtn.addEventListener('click', () => {
+        persist();
+        const days = Number(backfillEl.value || 7);
+        _sendCommand('fxcm_backfill', {
+          symbol: currentSymbol(),
+          start_utc: _buildUtcIso(days),
+          end_utc: new Date().toISOString().slice(0, 19) + 'Z',
+          publish: true,
+          window_hours: Number(windowEl.value || 24),
+        });
+      });
+    }
+    if (republishBtn) {
+      republishBtn.addEventListener('click', () => {
+        persist();
+        _sendCommand('fxcm_republish_tail', {
+          symbol: currentSymbol(),
+          timeframes: ['1m'],
+          window_hours: Number(windowEl.value || 24),
+          force: true,
+        });
+      });
+    }
+    if (bootstrapBtn) {
+      bootstrapBtn.addEventListener('click', () => {
+        persist();
+        const days = Number(backfillEl.value || 7);
+        _sendCommand('fxcm_bootstrap', {
+          warmup: {
+            symbols: [currentSymbol()],
+            lookback_days: Number(lookbackEl.value || 7),
+            publish: true,
+            window_hours: Number(windowEl.value || 24),
+          },
+          backfill: {
+            symbol: currentSymbol(),
+            start_utc: _buildUtcIso(days),
+            end_utc: new Date().toISOString().slice(0, 19) + 'Z',
+            publish: true,
+            window_hours: Number(windowEl.value || 24),
+          },
+          republish_tail: {
+            symbol: currentSymbol(),
+            timeframes: ['1m'],
+            window_hours: Number(windowEl.value || 24),
+            force: true,
+          },
+        });
+      });
+    }
   }
 
   function _openDrawer(status) {
@@ -918,6 +1076,16 @@
   }
 
   function onMessage(payload) {
+    if (payload.type === 'command_ack') {
+      const ok = payload.ok === true;
+      const req = payload.req_id ? ` (${payload.req_id})` : '';
+      if (ok) {
+        _updateCommandStatus(`OK: команда прийнята${req}`);
+      } else {
+        _updateCommandStatus(`FAIL: ${payload.error || 'command_failed'}`);
+      }
+      return;
+    }
     if (payload.type === 'health') {
       lastHealth = payload;
       const statusTs = Number(payload.status?.ts_ms || payload.status?.ts || 0);
@@ -967,7 +1135,7 @@
     }
   }
 
-  const ws = new WebSocket(`ws://${location.host}`);
+  ws = new WebSocket(`ws://${location.host}`);
   ws.onopen = () => { statusEl.textContent = 'WS: connected'; sendSubscribe(); };
   ws.onclose = () => { statusEl.textContent = 'WS: disconnected'; };
   ws.onerror = () => { statusEl.textContent = 'WS: error'; };
