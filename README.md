@@ -11,6 +11,7 @@ FXCM Connector vNext — конектор для FXCM із реальним ст
 - **SSOT final 1m** у FileCache (CSV + meta.json) з інваріантами.
 - **Reconcile finalization (P10.B)**: history tail → final 1m (history) + final 15m (history_agg) через fxcm_reconcile_tail (опційний auto на 15m close).
 - **Строгі контракти** для tick/ohlcv/status/commands (allowlist, fail‑fast).
+- **Command bus rails**: `max_command_payload_bytes` + редактинг errors + rate‑limit/coalesce/collapse + HMAC auth (default OFF).
 - **Status pubsub** — degraded‑but‑loud: при overflow публікується compact payload.
 - **Status heartbeat** — cadence керується SSOT: `status_publish_period_ms`, `status_fresh_warn_ms`.
 - **FXCM event ahead** — лічильник `fxcm_event_ahead_total{symbol}`; попередження throttle ≤ 1/60с на символ.
@@ -86,11 +87,18 @@ C:/Aione_projects/fxcm_connector_v2/.venv/Scripts/python.exe -m app.main
 - Додаткові rails (P8): gate_fxcm_tick_mode_config, gate_fxcm_tick_liveness.
 - E2E smoke: gate_e2e_tick_to_preview_smoke (tick → status → preview без FXCM SDK).
 
+## Security: Redis ACL
+
+Runbook: docs/runbooks/redis_acl.md — ACL для UI/SMC/connector з розмежуванням PUBLISH/READ у межах {NS}:*.
+
 ## Конфіг
 
 - config/config.py — SSOT для каналів/портів/таймфреймів/rails.
 - config/calendar_overrides.json — SSOT календар (NY recurrence + профілі, XAU 23:01 UTC).
 - docs/Public API Spec (SSOT).md — нормативні правила Public API.
+- max_command_payload_bytes — ліміт розміру payload команди (bytes), fast‑drop до json parse.
+- command_rate_limit_enable / command_coalesce_enable / command_heavy_collapse_enable — anti‑spam рейки команд (default OFF).
+- command_auth_enable / command_auth_required — rolling HMAC auth (default OFF).
 
 ## Поточна карта REPO_LAYOUT (актуальна)
 

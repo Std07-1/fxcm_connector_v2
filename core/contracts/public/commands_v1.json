@@ -7,6 +7,16 @@
     "cmd": { "type": "string", "minLength": 1 },
     "req_id": { "type": "string", "minLength": 1 },
     "ts": { "type": "integer", "minimum": 0 },
-    "args": { "type": "object", "additionalProperties": true }
+    "args": { "type": "object", "additionalProperties": true },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kid", "sig", "nonce"],
+      "properties": {
+        "kid": { "type": "string", "minLength": 1 },
+        "sig": { "type": "string", "minLength": 1 },
+        "nonce": { "type": "string", "minLength": 1 }
+      }
+    }
   }
 }

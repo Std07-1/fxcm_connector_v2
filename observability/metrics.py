@@ -11,6 +11,9 @@ class Metrics:
     """Контейнер метрик P0."""
 
     commands_total: Counter
+    commands_dropped_total: Counter
+    commands_rate_limited_total: Counter
+    commands_coalesced_total: Counter
     errors_total: Counter
     uptime_seconds: Gauge
     last_status_ts_ms: Gauge
@@ -63,6 +66,24 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
         "connector_commands_total",
         "Кількість оброблених команд",
         ["cmd", "state"],
+        registry=registry,
+    )
+    commands_dropped_total = Counter(
+        "connector_commands_dropped_total",
+        "Кількість відкинутих команд",
+        ["reason"],
+        registry=registry,
+    )
+    commands_rate_limited_total = Counter(
+        "connector_commands_rate_limited_total",
+        "Кількість команд, відхилених через rate-limit",
+        ["scope"],
+        registry=registry,
+    )
+    commands_coalesced_total = Counter(
+        "connector_commands_coalesced_total",
+        "Кількість коалесованих помилок команд",
+        ["reason"],
         registry=registry,
     )
     errors_total = Counter(
@@ -307,6 +328,9 @@ def create_metrics(registry: Optional[CollectorRegistry] = None) -> Metrics:
     )
     return Metrics(
         commands_total=commands_total,
+        commands_dropped_total=commands_dropped_total,
+        commands_rate_limited_total=commands_rate_limited_total,
+        commands_coalesced_total=commands_coalesced_total,
         errors_total=errors_total,
         uptime_seconds=uptime_seconds,
         last_status_ts_ms=last_status_ts_ms,

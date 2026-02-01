@@ -13,4 +13,7 @@ PROFILE_OVERRIDES = {
     "ui_lite_host": "127.0.0.1",
     "ui_lite_port": 8089,
     "fxcm_backend": "disabled",
+    "command_auth_enable": False,
+    "command_auth_required": False,
+    "command_auth_allowed_kids": [],
 }

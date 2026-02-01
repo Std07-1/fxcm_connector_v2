@@ -4,13 +4,14 @@
 - **app/** — entrypoint та composition root; запускає runtime і піднімає HTTP/UI/metrics. SSOT поведінка старту тут. Див. [app/main.py](../app/main.py) і [app/composition.py](../app/composition.py).
 - **config/** — SSOT конфіг, профілі, calendar overrides, шаблони секретів. Ключові runtime перемикачі — тут.
 - **core/** — доменна SSOT логіка: контракти/валидація, календар/час, ринкові типи, runtime‑режими.
-- **runtime/** — виконання: HTTP API, command bus, tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
+- **runtime/** — виконання: HTTP API, command bus (payload limits + redaction + rate-limit/coalesce/collapse + HMAC auth), tick ingest, preview, FXCM інтеграція, replay, status/metrics, tail_guard.
 - **observability/** — метрики/Prometheus (включно `fxcm_event_ahead_total`, `tick_out_of_order_total`).
 - **store/** — FileCache (CSV + meta.json) як SSOT (єдина персистентність).
 - **ui_lite/** — єдина канонічна UI (static + debug endpoint); health враховує market closed і heartbeat cadence.
 - **tests/** — unit/contract/gate тести; e2e smoke tick→status→preview; fixtures включно з JSONL ticks.
 - **tools/** — операційні скрипти та exit gates (runner SSOT).
 - **docs/** — SSOT документація/аудити/правила.
+- **docs/runbooks/** — операційні runbook (включно Redis ACL).
 - **data/**, **reports/** — артефакти запусків і аудитів.
 - **History/** — локальні історичні файли/артефакти (legacy).
 
@@ -69,6 +70,7 @@
 |   |-- Public API Spec (SSOT).md      # SSOT API
 |   |-- Public Surface.md              # поверхня доступу
 |   |-- audit_v6_public_surface.md     # аудит поверхні
+|   |-- runbooks/                       # операційні runbook
 |   |-- evidence/                      # архів доказів/вхідних даних
 |   `-- ...                            # решта аудитів/специфікацій
 |-- fxcm/                              # АРХІВ/МЕРТВИЙ: legacy FXCM провайдери/стаби
@@ -81,7 +83,8 @@
 |-- runtime/                           # runtime виконання
 |   |-- http_server.py                 # HTTP API (/api/*, /chart stub)
 |   |-- status.py                      # status snapshot + adaptive pubsub (compact on overflow) + telemetry
-|   |-- command_bus.py                 # обробка команд
+|   |-- command_bus.py                 # обробка команд (payload limits + redaction + rate-limit/coalesce/collapse + HMAC auth)
+|   |-- command_auth.py                # HMAC auth + anti-replay для команд
 |   |-- tick_feed.py                   # tick feed: FxcmForexConnectStream → TickPublisher → Redis
 |   |-- replay_ticks.py                # replay ingest (REAL‑only)
 |   |-- forexconnect_stream.py         # FXCM stream wrapper

@@ -99,6 +99,21 @@ class Config:
     ohlcv_channel: str = ""
     heartbeat_channel: str = ""
     command_bus_heartbeat_period_s: int = 2
+    max_command_payload_bytes: int = 16_384  # hard-rail для payload команд (bytes)
+    command_rate_limit_enable: bool = True  # глобальний rate-limit для команд (default OFF)
+    command_rate_limit_raw_per_s: int = 20  # raw rate-limit до JSON parse
+    command_rate_limit_raw_burst: int = 40
+    command_rate_limit_cmd_per_s: int = 5  # per-cmd rate-limit після validate
+    command_rate_limit_cmd_burst: int = 10
+    command_coalesce_enable: bool = True  # coalesce помилок команд (default OFF)
+    command_coalesce_window_s: int = 30
+    command_heavy_collapse_enable: bool = True  # collapse-to-latest для heavy команд
+    command_heavy_cmds: List[str] = field(default_factory=lambda: ["backfill", "warmup", "tail_guard", "reconcile"])
+    command_auth_enable: bool = True  # HMAC auth для команд (rolling mode)
+    command_auth_required: bool = False  # якщо True → auth обов'язковий
+    command_auth_max_skew_ms: int = 300_000  # допуск на skew часу (ms)
+    command_auth_replay_ttl_ms: int = 300_000  # TTL для anti-replay (ms)
+    command_auth_allowed_kids: List[str] = field(default_factory=list)
 
     status_publish_period_ms: int = 1000
     status_fresh_warn_ms: int = 3000

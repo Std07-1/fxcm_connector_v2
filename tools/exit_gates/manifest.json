@@ -43,5 +43,10 @@
   {"id": "gate_preview_builder_ssot", "module": "tools.exit_gates.gates.gate_preview_builder_ssot", "fn": "run"},
   {"id": "gate_tools_thin_wrapper", "module": "tools.exit_gates.gates.gate_tools_thin_wrapper", "fn": "run"},
   {"id": "gate_no_local_tokenbucket_history", "module": "tools.exit_gates.gates.gate_no_local_tokenbucket_history", "fn": "run"},
-  {"id": "gate_no_history_fetch_when_not_ready", "module": "tools.exit_gates.gates.gate_no_history_fetch_when_not_ready", "fn": "run"}
+  {"id": "gate_no_history_fetch_when_not_ready", "module": "tools.exit_gates.gates.gate_no_history_fetch_when_not_ready", "fn": "run"},
+  {"id": "gate_command_payload_limits", "module": "tools.exit_gates.gates.gate_command_payload_limits", "fn": "run"},
+  {"id": "gate_status_error_redaction", "module": "tools.exit_gates.gates.gate_status_error_redaction", "fn": "run"},
+  {"id": "gate_command_bus_ratelimit", "module": "tools.exit_gates.gates.gate_command_bus_ratelimit", "fn": "run"},
+  {"id": "gate_command_hmac_required", "module": "tools.exit_gates.gates.gate_command_hmac_required", "fn": "run"},
+  {"id": "gate_runbook_redis_acl_exists", "module": "tools.exit_gates.gates.gate_runbook_redis_acl_exists", "fn": "run"}
 ]

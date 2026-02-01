@@ -44,6 +44,13 @@ def _trim_list(values: Any, max_len: int) -> List[Any]:
     return list(values[-max_len:])
 
 
+def _redact_public_message(message: str, max_len: int = 160) -> str:
+    text = str(message).replace("\r", " ").replace("\n", " ").strip()
+    if len(text) > max_len:
+        return text[:max_len]
+    return text
+
+
 def build_status_pubsub_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """Будує компактний payload для pubsub/snapshot без великих масивів."""
     payload = {
@@ -241,6 +248,8 @@ class StatusManager:
         self._preview_paused = False
         self._error_throttle_lock = threading.Lock()
         self._error_throttle_last_ts_by_key: Dict[str, int] = {}
+        self._error_coalesce_lock = threading.Lock()
+        self._error_coalesce_last_ts_by_key: Dict[str, int] = {}
 
     def _ensure_tail_guard_tiers(self) -> Dict[str, Any]:
         tail = self._snapshot.get("tail_guard")
@@ -559,6 +568,55 @@ class StatusManager:
         self._snapshot.setdefault("errors", []).append(err)
         if self.metrics is not None:
             self.metrics.errors_total.labels(code=code, severity=severity).inc()
+
+    def append_public_error(
+        self,
+        code: str,
+        severity: str,
+        public_message: str,
+        max_len: int = 160,
+    ) -> None:
+        message = _redact_public_message(public_message, max_len=max_len)
+        self.append_error(code=code, severity=severity, message=message)
+
+    def append_public_error_coalesced(
+        self,
+        code: str,
+        severity: str,
+        public_message: str,
+        coalesce_key: Optional[str] = None,
+        window_s: int = 30,
+        max_len: int = 160,
+    ) -> bool:
+        key = str(coalesce_key or code)
+        now_ms = _now_ms()
+        window_ms = max(0, int(window_s) * 1000)
+        with self._error_coalesce_lock:
+            last_ts = int(self._error_coalesce_last_ts_by_key.get(key, 0))
+            if window_ms > 0 and now_ms - last_ts < window_ms:
+                self._bump_coalesce_error_count(code=code, now_ms=now_ms)
+                return False
+            self._error_coalesce_last_ts_by_key[key] = now_ms
+        message = _redact_public_message(public_message, max_len=max_len)
+        self.append_error(code=code, severity=severity, message=message)
+        return True
+
+    def _bump_coalesce_error_count(self, code: str, now_ms: int) -> None:
+        errors = self._snapshot.get("errors")
+        if not isinstance(errors, list) or not errors:
+            return
+        last = errors[-1]
+        if not isinstance(last, dict) or last.get("code") != code:
+            return
+        context_obj = last.get("context")
+        context: Dict[str, Any] = dict(context_obj) if isinstance(context_obj, dict) else {}
+        prev_count = int(context.get("count", 1))
+        context["count"] = prev_count + 1
+        context["last_ts"] = now_ms
+        last["context"] = context
+        last["ts"] = now_ms
+        errors[-1] = last
+        self._snapshot["errors"] = errors
 
     def append_error_throttled(
         self,

@@ -7,6 +7,7 @@ from typing import Dict, Iterable, Set
 ALLOWED_ENV_KEYS: Set[str] = {
     "AI_ONE_ENV_FILE",
     "FXCM_HMAC_SECRET",
+    "FXCM_HMAC_KID",
     "FXCM_HMAC_ALGO",
     "FXCM_HMAC_REQUIRED",
     "FXCM_USERNAME",
