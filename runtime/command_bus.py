@@ -475,6 +475,8 @@ class CommandBus:
     def _is_cmd_rate_limited(self, cmd: str) -> bool:
         if not self._config.command_rate_limit_enable:
             return False
+        if self._config.command_heavy_collapse_enable and cmd in self._heavy_cmds and cmd in self._heavy_inflight:
+            return False
         bucket = self._cmd_rate_buckets.get(cmd)
         if bucket is None:
             bucket = TokenBucket(

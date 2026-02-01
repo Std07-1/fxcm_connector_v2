@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import pytest
 
@@ -16,7 +16,7 @@ from store.file_cache.history_cache import FileCache
 
 class DummyRedis:
     def __init__(self) -> None:
-        self._store = {}
+        self._store: Dict[str, str] = {}
 
     def get(self, key: str) -> Optional[str]:
         return self._store.get(key)
@@ -27,7 +27,7 @@ class DummyRedis:
 
 class DummyPublisher:
     def __init__(self) -> None:
-        self.published = []
+        self.published: List[Tuple[str, str, list]] = []
 
     def publish_ohlcv_final_1m(self, symbol: str, bars: list, validator: SchemaValidator) -> None:
         self.published.append((symbol, "1m", bars))

@@ -56,7 +56,7 @@ class Config:
     reconcile_active_symbols: List[str] = field(default_factory=lambda: ["XAUUSD"])
     reconcile_lookback_minutes_default: int = 20
 
-    calendar_tag: str = "fxcm_calendar_v1_ny"
+    calendar_tag: str = "fxcm_calendar_v1_utc_overrides"
     calendar_path: str = "config/calendar_overrides.json"
 
     max_bars_per_message: int = 512  # макс барів в одному повідомленні OHLCV
@@ -70,6 +70,8 @@ class Config:
     retention_target_days: int = 7  # SSOT ціль покриття retention для 1m final
     warmup_lookback_days: int = 7  # кількість днів для прогріву при старті
     warmup_default_lookback_days: int = 7  # дефолт прогріву, якщо не задано у команді
+    auto_warmup_on_start: bool = True  # auto warmup при старті (cold start)
+    auto_republish_on_start: bool = True  # auto republish tail при рестарті (hot start)
     history_chunk_minutes: int = 24  # розмір чанку історії при запиті
     history_chunk_limit: int = 1000  # макс кількість чанків за один запит
     max_requests_per_minute: int = 30  # макс кількість запитів до історії за хвилину

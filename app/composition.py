@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -938,6 +939,159 @@ def build_runtime(config: Config, fxcm_preview: bool) -> RuntimeHandles:
     if config.ui_lite_enabled:
         ui_lite_handle = start_ui_lite(config=config, redis_client=redis_client)
         log.info("UI Lite запущено на %s:%s", config.ui_lite_host, config.ui_lite_port)
+
+    def _coverage_days_from_rows(rows: List[Dict[str, Any]]) -> int:
+        if not rows:
+            return 0
+        first_open = int(rows[0].get("open_time_ms", 0))
+        last_close = int(rows[-1].get("close_time_ms", 0))
+        if first_open <= 0 or last_close <= 0 or last_close < first_open:
+            return 0
+        span_ms = int(last_close - first_open + 1)
+        return int(max(0, span_ms) / (24 * 60 * 60 * 1000))
+
+    def _should_auto_warmup(symbol: str) -> bool:
+        if file_cache is None:
+            return False
+        rows, _meta = file_cache.load(symbol, "1m")
+        if not rows:
+            return True
+        coverage_days = _coverage_days_from_rows(rows)
+        return coverage_days < int(config.retention_target_days)
+
+    def _auto_warmup_worker() -> None:
+        if not config.auto_warmup_on_start:
+            return
+        log.info("auto_warmup_on_start увімкнено")
+        if file_cache is None:
+            status.append_error(
+                code="auto_warmup_cache_disabled",
+                severity="error",
+                message="auto_warmup неможливий: cache вимкнений",
+            )
+            status.mark_degraded("auto_warmup_cache_disabled")
+            status.publish_snapshot()
+            return
+        if history_provider is None:
+            status.append_error(
+                code="auto_warmup_provider_unavailable",
+                severity="error",
+                message="auto_warmup неможливий: history provider не налаштований",
+            )
+            status.mark_degraded("auto_warmup_provider_unavailable")
+            status.publish_snapshot()
+            return
+        symbols = list(config.fxcm_symbols or [])
+        if not symbols:
+            if config.preview_symbol:
+                symbols = [str(config.preview_symbol)]
+        for symbol in symbols:
+            if not _should_auto_warmup(str(symbol)):
+                continue
+            try:
+                handle_warmup_command(
+                    payload={
+                        "args": {
+                            "symbols": [str(symbol)],
+                            "lookback_days": int(config.warmup_lookback_days),
+                            "publish": False,
+                        }
+                    },
+                    config=config,
+                    file_cache=file_cache,
+                    provider=history_provider,
+                    status=status,
+                    metrics=metrics,
+                    publish_tail=_publish_final_tail,
+                    rebuild_callback=None,
+                )
+                republish_tail(
+                    config=config,
+                    file_cache=file_cache,
+                    redis_client=redis_client,
+                    publisher=publisher,
+                    validator=validator,
+                    status=status,
+                    metrics=metrics,
+                    symbol=str(symbol),
+                    timeframes=["1m"],
+                    window_hours=int(config.republish_tail_window_hours_default),
+                    force=True,
+                    req_id="auto_warmup",
+                )
+            except Exception as exc:  # noqa: BLE001
+                status.append_error(
+                    code="auto_warmup_error",
+                    severity="error",
+                    message=str(exc),
+                    context={"symbol": str(symbol)},
+                )
+                status.mark_degraded("auto_warmup_error")
+            finally:
+                status.publish_snapshot()
+
+    if config.auto_warmup_on_start:
+        threading.Thread(target=_auto_warmup_worker, name="auto_warmup", daemon=True).start()
+
+    def _auto_republish_worker() -> None:
+        if not config.auto_republish_on_start:
+            return
+        log.info("auto_republish_on_start увімкнено")
+        if file_cache is None:
+            status.append_error(
+                code="auto_republish_cache_disabled",
+                severity="error",
+                message="auto_republish неможливий: cache вимкнений",
+            )
+            status.mark_degraded("auto_republish_cache_disabled")
+            status.publish_snapshot()
+            return
+        symbols = list(config.fxcm_symbols or [])
+        if not symbols:
+            if config.preview_symbol:
+                symbols = [str(config.preview_symbol)]
+        for symbol in symbols:
+            rows, meta = file_cache.load(str(symbol), "1m")
+            if not rows:
+                continue
+            last_write_source = str(meta.get("last_write_source", ""))
+            if last_write_source not in {"history", "history_agg"}:
+                status.append_error(
+                    code="auto_republish_skipped",
+                    severity="warn",
+                    message="auto_republish пропущено: last_write_source не final",
+                    context={"symbol": str(symbol), "last_write_source": last_write_source},
+                )
+                status.publish_snapshot()
+                continue
+            try:
+                republish_tail(
+                    config=config,
+                    file_cache=file_cache,
+                    redis_client=redis_client,
+                    publisher=publisher,
+                    validator=validator,
+                    status=status,
+                    metrics=metrics,
+                    symbol=str(symbol),
+                    timeframes=["1m"],
+                    window_hours=int(config.republish_tail_window_hours_default),
+                    force=False,
+                    req_id="auto_republish",
+                )
+            except Exception as exc:  # noqa: BLE001
+                status.append_error(
+                    code="auto_republish_error",
+                    severity="error",
+                    message=str(exc),
+                    context={"symbol": str(symbol)},
+                )
+                status.mark_degraded("auto_republish_error")
+            finally:
+                status.publish_snapshot()
+
+    if config.auto_republish_on_start:
+        threading.Thread(target=_auto_republish_worker, name="auto_republish", daemon=True).start()
 
     return RuntimeHandles(
         config=config,

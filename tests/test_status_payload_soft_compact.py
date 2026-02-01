@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from config.config import Config
 from core.time.calendar import Calendar
@@ -102,7 +102,7 @@ def _extract_payload(manager: StatusManager) -> Dict[str, Any]:
     assert isinstance(publisher, DummyPublisher)
     payload_json = publisher.publish_json
     assert payload_json is not None
-    return json.loads(payload_json)
+    return cast(Dict[str, Any], json.loads(payload_json))
 
 
 def test_status_payload_soft_compact_disabled_detail() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from app.composition import _publish_reconcile_command
 from config.config import Config
@@ -12,7 +12,7 @@ from runtime.status import StatusManager
 
 class DummyRedis:
     def __init__(self) -> None:
-        self.published = []
+        self.published: List[Tuple[str, str]] = []
 
     def publish(self, channel: str, json_str: str) -> None:
         self.published.append((channel, json_str))

@@ -59,7 +59,21 @@ class FxcmForexConnectHistoryAdapter(FxcmHistoryAdapter):
                 "",
             )
             history = fx.get_history(instrument, "m1", start_dt, end_dt)
-            rows = list(history) if history is not None else []
+            if history is None:
+                rows = []
+            elif hasattr(history, "columns") and hasattr(history, "values"):
+                try:
+                    columns = [str(col) for col in list(history.columns)]
+                    rows = [dict(zip(columns, row)) for row in list(history.values)]
+                except Exception:
+                    rows = []
+            elif hasattr(history, "to_dict"):
+                try:
+                    rows = list(history.to_dict("records"))
+                except Exception:
+                    rows = list(history)
+            else:
+                rows = list(history)
             return _rows_to_bars(symbol, rows, limit)
         except Exception as exc:  # noqa: BLE001
             raise ContractError(f"fxcm history fetch failed: {exc}")
@@ -75,14 +89,129 @@ def _row_value(row: Any, keys: Iterable[str]) -> Any:
         value = getattr(row, key, None)
         if value is None and isinstance(row, dict):
             value = row.get(key)
+            if value is None:
+                key_lower = str(key).lower()
+                for row_key, row_value in row.items():
+                    if str(row_key).lower() == key_lower:
+                        value = row_value
+                        break
+        to_dict_fn = getattr(row, "to_dict", None)
+        if value is None and callable(to_dict_fn):
+            try:
+                row_dict = to_dict_fn()
+                if isinstance(row_dict, dict):
+                    value = row_dict.get(key)
+                    if value is None:
+                        key_lower = str(key).lower()
+                        for row_key, row_value in row_dict.items():
+                            if str(row_key).lower() == key_lower:
+                                value = row_value
+                                break
+            except Exception:
+                value = None
         if value is not None:
             return value
     return None
 
 
+def _coerce_row_dict(row: Any) -> Any:
+    if isinstance(row, dict):
+        return row
+    tolist_fn = getattr(row, "tolist", None)
+    if callable(tolist_fn):
+        try:
+            row_list = tolist_fn()
+            if isinstance(row_list, (list, tuple)):
+                row = list(row_list)
+        except Exception:
+            pass
+    if isinstance(row, (list, tuple)):
+        seq = list(row)
+        if len(seq) >= 10:
+            return {
+                "date": seq[0],
+                "bidopen": seq[1],
+                "bidhigh": seq[2],
+                "bidlow": seq[3],
+                "bidclose": seq[4],
+                "askopen": seq[5],
+                "askhigh": seq[6],
+                "asklow": seq[7],
+                "askclose": seq[8],
+                "volume": seq[9],
+            }
+        if len(seq) >= 6:
+            return {
+                "date": seq[0],
+                "open": seq[1],
+                "high": seq[2],
+                "low": seq[3],
+                "close": seq[4],
+                "volume": seq[5],
+            }
+    return row
+
+
+def _row_keys(row: Any) -> List[str]:
+    if isinstance(row, dict):
+        return [str(key) for key in row.keys()]
+    to_dict_fn = getattr(row, "to_dict", None)
+    if callable(to_dict_fn):
+        try:
+            row_dict = to_dict_fn()
+            if isinstance(row_dict, dict):
+                return [str(key) for key in row_dict.keys()]
+        except Exception:
+            pass
+    if hasattr(row, "keys"):
+        try:
+            return [str(key) for key in row.keys()]
+        except Exception:
+            pass
+    try:
+        return [str(key) for key in vars(row).keys()]
+    except Exception:
+        return []
+
+
+def _row_evidence(row: Any) -> str:
+    row_type = type(row).__name__
+    try:
+        row_keys = _row_keys(row)
+    except Exception:
+        row_keys = []
+    keys_trim = row_keys[:20]
+    keys_suffix = "" if len(row_keys) <= 20 else f"(+{len(row_keys) - 20})"
+    try:
+        row_repr = repr(row)
+    except Exception:
+        row_repr = "<repr_error>"
+    if len(row_repr) > 400:
+        row_repr = row_repr[:400] + "..."
+    try:
+        dir_items = [
+            name
+            for name in dir(row)
+            if any(key in name.lower() for key in ["date", "time", "bid", "ask", "open", "high", "low", "close", "vol"])
+        ]
+    except Exception:
+        dir_items = []
+    dir_trim = dir_items[:20]
+    dir_suffix = "" if len(dir_items) <= 20 else f"(+{len(dir_items) - 20})"
+    return (
+        f"row_type={row_type} row_keys={keys_trim}{keys_suffix} "
+        f"row_repr={row_repr} dir_match={dir_trim}{dir_suffix}"
+    )
+
+
 def _to_ms(value: Any) -> Optional[int]:
     if value is None:
         return None
+    if isinstance(value, (list, tuple)):
+        if len(value) == 2 and all(isinstance(item, (int, float)) for item in value):
+            return _to_ms(value[0])
+        if len(value) == 3 and all(isinstance(item, (int, float)) for item in value):
+            return _to_ms(value[0])
     if isinstance(value, (int, float)):
         if isinstance(value, bool):
             return None
@@ -92,8 +221,41 @@ def _to_ms(value: Any) -> Optional[int]:
         if val > 9_999_999_999_999:
             return None
         return val
+    if isinstance(value, str):
+        text = value.strip()
+        if text.endswith("Z") and "." in text:
+            head, tail = text.split(".", 1)
+            digits = "".join(ch for ch in tail if ch.isdigit())
+            if digits:
+                digits = digits[:6].ljust(6, "0")
+                text = f"{head}.{digits}Z"
+        elif "." in text:
+            head, tail = text.split(".", 1)
+            digits = "".join(ch for ch in tail if ch.isdigit())
+            if digits:
+                digits = digits[:6].ljust(6, "0")
+                text = f"{head}.{digits}"
+        try:
+            return int(to_epoch_ms_utc(text))
+        except Exception:
+            return None
+    to_pydatetime = getattr(value, "to_pydatetime", None)
+    if callable(to_pydatetime):
+        try:
+            return _to_ms(to_pydatetime())
+        except Exception:
+            return None
     if isinstance(value, datetime):
         return int(value.astimezone(timezone.utc).timestamp() * 1000)
+    for attr in ["value", "item"]:
+        getter = getattr(value, attr, None)
+        if callable(getter):
+            try:
+                inner = getter()
+                if inner is not value:
+                    return _to_ms(inner)
+            except Exception:
+                pass
     try:
         return int(to_epoch_ms_utc(value))
     except Exception:
@@ -103,11 +265,31 @@ def _to_ms(value: Any) -> Optional[int]:
 def _rows_to_bars(symbol: str, rows: Iterable[Any], limit: int) -> List[Dict[str, Any]]:
     bars: List[Dict[str, Any]] = []
     for row in rows:
+        row = _coerce_row_dict(row)
         if len(bars) >= limit:
             break
-        open_time_raw = _row_value(row, ["open_time", "time", "timestamp", "date", "Date", "open_time_utc"])
+        open_time_raw = _row_value(
+            row,
+            [
+                "open_time",
+                "time",
+                "timestamp",
+                "date",
+                "Date",
+                "DATE",
+                "datetime",
+                "DATETIME",
+                "DateTime",
+                "Datetime",
+                "open_time_utc",
+                "date_utc",
+                "open_time_ms",
+            ],
+        )
         if open_time_raw is None:
-            raise ContractError("history_row_missing_date")
+            row_keys = _row_keys(row)
+            evidence = _row_evidence(row)
+            raise ContractError(f"history_row_missing_date: row_keys={row_keys} {evidence}")
         open_time_ms = _to_ms(open_time_raw)
         if open_time_ms is None:
             raise ContractError("history_row_date_invalid")
@@ -115,13 +297,13 @@ def _rows_to_bars(symbol: str, rows: Iterable[Any], limit: int) -> List[Dict[str
         close_time_ms = _to_ms(close_time_raw) if close_time_raw is not None else None
         if close_time_ms is None:
             close_time_ms = int(open_time_ms) + 60_000 - 1
-        open_val = _row_value(row, ["open", "bidopen", "askopen"])
-        high_val = _row_value(row, ["high", "bidhigh", "askhigh"])
-        low_val = _row_value(row, ["low", "bidlow", "asklow"])
-        close_val = _row_value(row, ["close", "bidclose", "askclose"])
+        open_val = _row_value(row, ["open", "bidopen", "askopen", "BidOpen", "AskOpen"])
+        high_val = _row_value(row, ["high", "bidhigh", "askhigh", "BidHigh", "AskHigh"])
+        low_val = _row_value(row, ["low", "bidlow", "asklow", "BidLow", "AskLow"])
+        close_val = _row_value(row, ["close", "bidclose", "askclose", "BidClose", "AskClose"])
         if open_val is None or high_val is None or low_val is None or close_val is None:
             continue
-        volume = _row_value(row, ["volume", "vol", "tick_volume"])
+        volume = _row_value(row, ["volume", "vol", "tick_volume", "Volume"])
         bar = {
             "symbol": symbol,
             "open_time_ms": int(open_time_ms),

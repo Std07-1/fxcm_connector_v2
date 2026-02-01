@@ -34,5 +34,21 @@ def test_history_row_missing_date_fail_fast() -> None:
             "volume": 10,
         }
     ]
-    with pytest.raises(ContractError, match="history_row_missing_date"):
+    with pytest.raises(ContractError, match="history_row_missing_date: row_keys"):
         _rows_to_bars("XAUUSD", rows, limit=10)
+
+
+def test_history_row_date_alias_open_time_ms() -> None:
+    rows = [
+        {
+            "open_time_ms": 1769970000000,
+            "open": 1.0,
+            "high": 1.2,
+            "low": 0.9,
+            "close": 1.1,
+            "volume": 10,
+        }
+    ]
+    bars = _rows_to_bars("XAUUSD", rows, limit=10)
+    assert len(bars) == 1
+    assert int(bars[0]["open_time_ms"]) == 1769970000000

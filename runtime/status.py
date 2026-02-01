@@ -85,9 +85,10 @@ def build_status_pubsub_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     ]:
         value = snapshot.get(key)
         if isinstance(value, dict):
-            payload[key] = dict(value)
-            if key == "reconcile" and "last_end_ms" not in payload[key]:
-                payload[key]["last_end_ms"] = 0
+            value_dict = dict(value)
+            if key == "reconcile" and "last_end_ms" not in value_dict:
+                value_dict["last_end_ms"] = 0
+            payload[key] = value_dict
 
     derived = snapshot.get("derived_rebuild")
     if isinstance(derived, dict):

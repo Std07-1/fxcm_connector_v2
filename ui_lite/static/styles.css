@@ -64,11 +64,26 @@ select, button {
 
 .healthbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   padding: 8px 14px;
   border-bottom: 1px solid #1f2430;
-  background: #0f1116;
+  background: rgba(15, 17, 22, 0.85);
+  backdrop-filter: blur(2px);
+}
+
+.healthbar.overlay {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 6;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.healthbar.hidden {
+  display: none;
 }
 
 .health-block {

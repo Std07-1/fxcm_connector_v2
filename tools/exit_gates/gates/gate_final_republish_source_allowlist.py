@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Optional, Tuple, cast
+from typing import Any, Dict, Optional, Tuple, cast
 
 from config.config import Config
 from core.time.calendar import Calendar
@@ -15,7 +15,7 @@ from tools.run_exit_gates import fail_direct_gate_run
 
 class DummyRedis:
     def __init__(self) -> None:
-        self._store = {}
+        self._store: Dict[str, str] = {}
 
     def get(self, key: str) -> Optional[str]:
         return self._store.get(key)

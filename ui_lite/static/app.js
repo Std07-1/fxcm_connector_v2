@@ -11,6 +11,7 @@
   const currentEl = document.getElementById('current-sub');
   const subscribeBtn = document.getElementById('subscribe');
   const fitBtn = document.getElementById('fit');
+  const diagnosticsBtn = document.getElementById('toggle-diagnostics');
 
   const topbarEl = document.querySelector('.topbar');
   const chartWrapEl = document.querySelector('.chart-wrap');
@@ -52,15 +53,21 @@
   const tickBlock = _createHealthBlock('ТІК');
   const wsBlock = _createHealthBlock('WS');
   const uiBlock = _createHealthBlock('UI');
+  const finalBlock = _createHealthBlock('FINAL');
+  const cmdBlock = _createHealthBlock('CMD');
   const statusBlockEl = statusBlock.body;
   const tickBlockEl = tickBlock.body;
   const wsBlockEl = wsBlock.body;
   const uiBlockEl = uiBlock.body;
+  const finalBlockEl = finalBlock.body;
+  const cmdBlockEl = cmdBlock.body;
 
   const STORAGE_KEY = 'ui_lite_settings_v1';
+  const DIAG_KEY = 'ui_lite_diagnostics_mode_v1';
   let lastTimeRange = null;
   let pendingTimeRange = null;
   let appliedTimeRange = false;
+  let diagnosticsMode = 'inline';
 
   function _normalizeTimeRange(raw) {
     if (!raw || typeof raw !== 'object') return null;
@@ -115,6 +122,37 @@
     appliedTimeRange = false;
   }
 
+  function _setDiagnosticsMode(mode) {
+    diagnosticsMode = mode;
+    if (!healthBarEl) return;
+    healthBarEl.classList.remove('overlay');
+    healthBarEl.classList.remove('hidden');
+    if (mode === 'hidden') {
+      healthBarEl.classList.add('hidden');
+    } else if (mode === 'overlay') {
+      healthBarEl.classList.add('overlay');
+    }
+    if (mode === 'overlay' && chartWrapEl) {
+      chartWrapEl.appendChild(healthBarEl);
+    } else if (topbarEl && topbarEl.parentElement) {
+      topbarEl.insertAdjacentElement('afterend', healthBarEl);
+    }
+    try {
+      localStorage.setItem(DIAG_KEY, mode);
+    } catch {
+      // ignore
+    }
+    if (diagnosticsBtn) {
+      const label = mode === 'overlay' ? 'Діагностика: overlay' : mode === 'hidden' ? 'Діагностика: hidden' : 'Діагностика: inline';
+      diagnosticsBtn.textContent = label;
+    }
+  }
+
+  function _cycleDiagnosticsMode() {
+    const next = diagnosticsMode === 'inline' ? 'overlay' : diagnosticsMode === 'overlay' ? 'hidden' : 'inline';
+    _setDiagnosticsMode(next);
+  }
+
   function _badge(text, kind) {
     return `<span class="badge ${kind}">${text}</span>`;
   }
@@ -135,6 +173,14 @@
     const ts = _parseUtcMs(value);
     if (!ts) return '-';
     const iso = new Date(ts).toISOString();
+    const date = iso.slice(0, 10);
+    const time = iso.slice(11, 16);
+    return `${date} ${time} UTC`;
+  }
+
+  function _formatUtcMs(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) return '-';
+    const iso = new Date(Number(ms)).toISOString();
     const date = iso.slice(0, 10);
     const time = iso.slice(11, 16);
     return `${date} ${time} UTC`;
@@ -307,6 +353,63 @@
     `;
   }
 
+  function _renderFinalBlock(status) {
+    const final1m = status?.ohlcv_final_1m || {};
+    const coverage = status?.ohlcv?.final_1m || {};
+    const republish = status?.republish || {};
+    const tailSummary = status?.tail_guard_summary || {};
+    const tf1m = tailSummary?.tf_states?.['1m'] || {};
+    const lastClose = Number(final1m.last_complete_bar_ms || 0);
+    const lagMs = _fmt(final1m.lag_ms);
+    const coverageOk = coverage.coverage_ok === true;
+    const coverageDays = _fmt(coverage.coverage_days);
+    const retentionDays = _fmt(coverage.retention_target_days);
+    const republishState = republish.state || '-';
+    const republishBatches = _fmt(republish.published_batches);
+    const tailState = tf1m.state || '-';
+    const tailMissing = _fmt(tf1m.missing_bars ?? 0);
+    finalBlockEl.innerHTML = `
+      <div class="health-row">
+        <span class="health-label">FINAL 1m</span>${_badge(_formatUtcMs(lastClose), lastClose > 0 ? 'neutral' : 'na')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">LAG</span>${_badge(String(lagMs), lagMs !== '-' ? 'neutral' : 'na')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">COVERAGE</span>${_badge(`${coverageDays}/${retentionDays}`, coverageOk ? 'ok' : 'warn')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">REPUBLISH</span>${_badge(`${_escape(republishState)} • ${republishBatches}`, republishState === 'ok' ? 'ok' : 'neutral')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">TAIL 1m</span>${_badge(`${_escape(tailState)} • ${tailMissing}`, tailState === 'ok' ? 'ok' : 'warn')}
+      </div>
+    `;
+  }
+
+  function _renderCommandBlock(status) {
+    const lastCmd = status?.last_command || {};
+    const bus = status?.command_bus || {};
+    const busState = bus.state || '-';
+    const busErr = bus.last_error?.code || '-';
+    const cmdName = lastCmd.cmd || '-';
+    const cmdState = lastCmd.state || '-';
+    cmdBlockEl.innerHTML = `
+      <div class="health-row">
+        <span class="health-label">BUS</span>${_badge(_escape(busState), busState === 'running' ? 'ok' : 'warn')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">BUS ERR</span>${_badge(_escape(busErr), busErr !== '-' ? 'warn' : 'ok')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">CMD</span>${_badge(_escape(cmdName), 'neutral')}
+      </div>
+      <div class="health-row">
+        <span class="health-label">STATE</span>${_badge(_escape(cmdState), cmdState === 'ok' ? 'ok' : cmdState === 'error' ? 'error' : 'neutral')}
+      </div>
+    `;
+  }
+
   function _updateOverlay(status) {
     const degraded = Array.isArray(status?.degraded) ? status.degraded : [];
     const previewPaused = status?.price?.preview_paused === true;
@@ -334,6 +437,9 @@
       _closeDrawer();
     }
   });
+  if (diagnosticsBtn) {
+    diagnosticsBtn.addEventListener('click', _cycleDiagnosticsMode);
+  }
   drawerBackdropEl.addEventListener('click', _closeDrawer);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -383,6 +489,17 @@
       pinch: true,
     },
   });
+
+  try {
+    const storedMode = localStorage.getItem(DIAG_KEY);
+    if (storedMode === 'overlay' || storedMode === 'hidden' || storedMode === 'inline') {
+      _setDiagnosticsMode(storedMode);
+    } else {
+      _setDiagnosticsMode('inline');
+    }
+  } catch {
+    _setDiagnosticsMode('inline');
+  }
 
   const timeScale = typeof chart.timeScale === 'function' ? chart.timeScale() : null;
   if (timeScale && typeof timeScale.subscribeVisibleTimeRangeChange === 'function') {
@@ -816,6 +933,8 @@
       _renderStatusBlock(payload.status || {}, payload);
       _renderTickBlock(payload.status || {});
       _renderUiBlock(payload.ui || {});
+      _renderFinalBlock(payload.status || {});
+      _renderCommandBlock(payload.status || {});
       _renderWsBlock();
       _updateOverlay(payload.status || {});
       return;
@@ -999,6 +1118,8 @@
     if (lastHealth) {
       _renderWsBlock();
       _renderStatusBlock(lastHealth.status || {}, lastHealth);
+      _renderFinalBlock(lastHealth.status || {});
+      _renderCommandBlock(lastHealth.status || {});
       let statusBadge = 'OK';
       if (lastHealth.status_ok !== true) {
         statusBadge = 'N/A';

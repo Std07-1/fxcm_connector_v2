@@ -96,6 +96,8 @@ Runbook: docs/runbooks/redis_acl.md — ACL для UI/SMC/connector з розм�
 - config/config.py — SSOT для каналів/портів/таймфреймів/rails.
 - config/calendar_overrides.json — SSOT календар (NY recurrence + профілі, XAU 23:01 UTC).
 - docs/Public API Spec (SSOT).md — нормативні правила Public API.
+- auto_warmup_on_start — auto warmup при cold start (default OFF), після завершення виконується republish tail.
+- auto_republish_on_start — auto republish tail при рестарті, якщо SSOT непорожній (default OFF).
 - max_command_payload_bytes — ліміт розміру payload команди (bytes), fast‑drop до json parse.
 - command_rate_limit_enable / command_coalesce_enable / command_heavy_collapse_enable — anti‑spam рейки команд (керуються профілями).
 - command_auth_enable / command_auth_required — rolling HMAC auth (керуються профілями).

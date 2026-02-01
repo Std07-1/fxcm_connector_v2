@@ -36,6 +36,26 @@ class DummyStatus:
             entry["context"] = context
         self.errors.append(entry)
 
+    def append_error_throttled(
+        self,
+        code: str,
+        severity: str,
+        message: str,
+        context: Optional[Dict[str, Any]] = None,
+        throttle_key: Optional[str] = None,
+        throttle_ms: int = 60_000,
+        now_ms: Optional[int] = None,
+        external_last_ts_by_key: Optional[Dict[str, int]] = None,
+        external_lock: Optional[Any] = None,
+    ) -> bool:
+        _ = throttle_key
+        _ = throttle_ms
+        _ = now_ms
+        _ = external_last_ts_by_key
+        _ = external_lock
+        self.append_error(code=code, severity=severity, message=message, context=context)
+        return True
+
     def mark_degraded(self, code: str) -> None:
         self.degraded.append(code)
 

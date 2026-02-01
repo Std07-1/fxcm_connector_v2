@@ -349,9 +349,10 @@ class FXCMOfferSubscription:
         self._symbols = [normalize_symbol(s) for s in symbols]
         self._on_tick = on_tick
         self._status = status
+        self._last_event_ahead_warn_ts_ms_by_symbol: Dict[str, int] = {}
+        self._event_ahead_warn_lock: threading.Lock = threading.Lock()
         if event_ahead_warn_state is None:
-            self._last_event_ahead_warn_ts_ms_by_symbol = {}
-            self._event_ahead_warn_lock = threading.Lock()
+            pass
         else:
             self._last_event_ahead_warn_ts_ms_by_symbol, self._event_ahead_warn_lock = event_ahead_warn_state
         self._event_ahead_throttle_ms = int(event_ahead_throttle_ms)

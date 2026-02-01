@@ -5,7 +5,7 @@ import os
 import time
 from hashlib import sha256
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from prometheus_client import CollectorRegistry
 
@@ -31,7 +31,7 @@ class InMemoryPublisher:
 
 class FakeRedis:
     def __init__(self) -> None:
-        self._store = {}
+        self._store: Dict[str, str] = {}
 
     def set(self, key: str, value: str, nx: bool = False, px: Optional[int] = None) -> bool:
         if nx and key in self._store:
